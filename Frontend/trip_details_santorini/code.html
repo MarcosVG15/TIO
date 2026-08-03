@@ -1,0 +1,276 @@
+<!DOCTYPE html><html class="light" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Santorini Getaway - NomadAI</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Literata:wght@400;500;700&amp;family=Nunito+Sans:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">tailwind.config = {darkMode: "class", theme: {extend: {colors: {"on-background": "#2c342e", "tertiary-fixed": "#fad998", "surface-variant": "#dce5db", "on-primary-fixed-variant": "#346544", "primary-container": "#b9efc5", "on-primary-container": "#2a5b3b", "on-primary": "#e8ffe9", "surface-container-highest": "#dce5db", primary: "#386948", "outline-variant": "#abb4ac", "error-container": "#fa746f", "inverse-surface": "#0b0f0c", surface: "#f7faf4", "on-surface-variant": "#59615a", "on-secondary": "#fff8f2", "inverse-primary": "#bef5ca", "surface-bright": "#f7faf4", "secondary-container": "#ece1d3", "surface-container-high": "#e3eae2", "on-surface": "#2c342e", background: "#f7faf4", "surface-container": "#e9f0e8", "inverse-on-surface": "#9a9e99", "surface-container-low": "#f0f5ee", "on-tertiary": "#fff8f1", "secondary-fixed-dim": "#ded3c5", "primary-fixed": "#b9efc5", "on-secondary-container": "#585146", "on-tertiary-fixed": "#4d3806", "surface-dim": "#d3dcd3", tertiary: "#745c27", error: "#a83836", "tertiary-fixed-dim": "#ebcb8b", "tertiary-container": "#fad998", "on-error-container": "#6e0a12", outline: "#747d75", "on-tertiary-fixed-variant": "#6c5421", "on-primary-fixed": "#15482a", "surface-tint": "#386948", "on-secondary-fixed": "#453e34", "on-error": "#fff7f6", secondary: "#665e53", "on-tertiary-container": "#614b18", "surface-container-lowest": "#ffffff", "secondary-fixed": "#ece1d3", "on-secondary-fixed-variant": "#625a50", "primary-fixed-dim": "#abe1b7", "error-dim": "#67040d", "secondary-dim": "#595248", "tertiary-dim": "#67501c", "primary-dim": "#2b5d3c"}, borderRadius: {DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px"}, spacing: {"margin-mobile": "16px", "margin-desktop": "40px", "container-max": "1280px", base: "8px", gutter: "24px"}, fontFamily: {"display-lg": ["Plus Jakarta Sans"], "headline-sm": ["Plus Jakarta Sans"], "body-sm": ["Be Vietnam Pro"], "body-md": ["Be Vietnam Pro"], "headline-md": ["Plus Jakarta Sans"], "display-lg-mobile": ["Plus Jakarta Sans"], "body-lg": ["Be Vietnam Pro"], "label-sm": ["Be Vietnam Pro"], "label-md": ["Be Vietnam Pro"], headline: ["Literata"], display: ["Literata"], body: ["Nunito Sans"], label: ["Nunito Sans"]}, fontSize: {"display-lg": ["48px", {lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-sm": ["20px", {lineHeight: "28px", fontWeight: "600"}], "body-sm": ["14px", {lineHeight: "20px", fontWeight: "400"}], "body-md": ["16px", {lineHeight: "24px", fontWeight: "400"}], "headline-md": ["24px", {lineHeight: "32px", fontWeight: "600"}], "display-lg-mobile": ["32px", {lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "700"}], "body-lg": ["18px", {lineHeight: "28px", fontWeight: "400"}], "label-sm": ["12px", {lineHeight: "14px", fontWeight: "500"}], "label-md": ["14px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "600"}]}}}};</script>
+<style>
+        .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .itinerary-line::before {
+            content: '';
+            position: absolute;
+            left: 11px;
+            top: 24px;
+            bottom: 0;
+            width: 2px;
+            background: #006a61; /* secondary / Wanderlust Blue equivalent */
+            opacity: 0.3;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .scrolled-header {
+            box-shadow: 0 4px 20px rgba(15, 23, 42, 0.05);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body-md text-body-md overflow-x-hidden">
+<!-- TopAppBar -->
+<header class="fixed top-0 left-0 w-full z-50 flex items-center justify-between px-margin-mobile h-16 bg-surface transition-all duration-300" id="top-app-bar"><div class="flex items-center gap-2 active:scale-95 transition-transform cursor-pointer">
+<span class="material-symbols-outlined text-secondary" data-icon="travel_explore">travel_explore</span>
+
+</div></header>
+<!-- Main Content Canvas -->
+<main class="pt-16 pb-24 min-h-screen">
+<!-- Hero Section -->
+<section class="relative w-full h-[397px] md:h-[530px] overflow-hidden">
+<div class="absolute inset-0 bg-cover bg-center" data-alt="A breathtaking landscape of Oia, Santorini at golden hour. The iconic whitewashed buildings with bright blue domes are nestled against the volcanic cliffs overlooking the deep azure Aegean Sea. The lighting is warm and ethereal, casting soft orange and pink hues across the sky. The overall aesthetic is clean, minimalist, and luxury-focused, aligning with a modern explorer theme." style="background-image: url(&quot;https://lh3.googleusercontent.com/aida-public/AB6AXuDfLPOhhjrIpI-HfeqPuVE4Px7nmZQSu7Pz9S41By5usmr08RHasAjUJCII3xiW1dutXGnbV_UcMyBFZfHz2ozDwTw1vdzkO1ExYO8izAGse1bJRS_hBTjFNNeGaowteVrk7wl1l0srmzbmw9RiprimKYMq8YgEx80OqFHKcY4A53wParM8FtzrZTPm-w63NgHdNYbr4AgTz0iB2WilZNSwJT502mPJdALVaSi51PRjOkgUlY7rMKjkwg&quot;);"></div>
+<div class="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent"></div>
+<div class="absolute bottom-0 left-0 w-full p-margin-mobile md:px-margin-desktop md:pb-margin-desktop">
+<div class="flex flex-col gap-2">
+<span class="inline-flex items-center bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full font-label-sm text-label-sm w-fit uppercase tracking-wider">Completed</span>
+<h2 class="font-display-lg-mobile text-display-lg-mobile md:text-display-lg md:font-display-lg text-primary">Santorini Getaway</h2>
+<p class="text-on-surface-variant font-body-lg text-body-lg flex items-center gap-2">
+<span class="material-symbols-outlined text-base" data-icon="calendar_month">calendar_month</span>
+                        June 14 — June 21, 2023
+                    </p>
+</div>
+</div>
+</section>
+<!-- Content Grid -->
+<div class="max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop mt-8">
+<div class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
+<!-- Sidebar / Quick Info (Stay & Taste) -->
+<aside class="md:col-span-4 space-y-gutter">
+<!-- Stay Card -->
+<div class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/30 flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<h3 class="font-headline-sm text-headline-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary" data-icon="bed">bed</span>
+                                Stay
+                            </h3>
+</div>
+<div class="group cursor-pointer">
+<div class="rounded-lg overflow-hidden h-40 mb-3">
+<img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" data-alt="A high-end boutique hotel room in Santorini. The interior features curved white plaster walls, minimalist wooden furniture, and a private balcony overlooking the sea. Soft morning light enters through a large archway. The design is airy, serene, and modern Mediterranean, perfectly capturing a high-end luxury travel vibe." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBm5zpvQsLVYWiYqJR9dPSq700KaqmrPXfn-5qaU36EDwsa0KttQqI2KgcfaKp1c329O2e10d7B5YVptOncMbmfRJ-eHUrem86k0u4IHsk4R_as1552EqOnSC0yM5xROehKP3s2KFEgzB-m1IMfZPzGehjhnsw4Ghm_Sr3nP7ScOHi1a0s6t8hHGTlQHgFTXDrtxmaAJR--SgQfBzY16KEqkwznf966Bpv65L1356HY21zmGZSGuLOR-Q">
+</div>
+<h4 class="font-label-md text-label-md text-primary">Astra Suites, Imerovigli</h4>
+<p class="text-body-sm text-on-surface-variant">Exceptional service with panoramic sunset views.</p>
+</div>
+</div>
+<!-- Taste Card -->
+<div class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/30 flex flex-col gap-4">
+<h3 class="font-headline-sm text-headline-sm flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary" data-icon="restaurant">restaurant</span>
+                            Taste
+                        </h3>
+<div class="space-y-4">
+<div class="flex items-center gap-3">
+<div class="w-12 h-12 rounded-lg bg-surface-variant flex-shrink-0">
+<img class="w-full h-full object-cover rounded-lg" data-alt="A close-up of a gourmet Greek seafood dish served on a minimalist ceramic plate. Fresh octopus with herbs and a drizzle of olive oil, presented in a high-end restaurant setting with soft, ambient lighting. Corporate modern photography style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBRPjr3kw_v4xsULyQXG_FO9eQmS5fH_StQMMp3GZOnfWeI5JIUqJOBzOOqoBY70NLKeueo3DmM0Oa2d3D3nJ6Dc9SkWfmJzSri3nJafW8xDcTbQwtuQJxYo64RNRgtfbpf7muRkeFKi6VRdGbUpbKUGgQDXwTKZINUsZ9QF9ohtwr62mDEsiRjWTFqLOFovtUG0CCUYN3AHvsp7pVNd0Ek6OBXE2pm4FNOWSojFlOvivm2VyyHzKH1tw">
+</div>
+<div>
+<h4 class="font-label-md text-label-md text-primary">Selene</h4>
+<p class="text-body-sm text-on-surface-variant">Fine dining in a former monastery.</p>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="w-12 h-12 rounded-lg bg-surface-variant flex-shrink-0">
+<img class="w-full h-full object-cover rounded-lg" data-alt="An outdoor seaside taverna in Santorini with blue tables and white chairs. A refreshing carafe of white wine and a Greek salad sit on the table. The Aegean sea is visible in the background under bright, clear daylight." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAaobUNRQoJN8j5QwMji7UI5_C1xihk_BoHj-xJ7K-a9ECe_Lp7hh8ctza65CqlNa4kt4QT5POW50lEkU7IgZQL8o2h9nHoOVSJFBqV2EIHV43rViF1w9QD-0GIn6dQL5L9baGUvS2L3dcPcgxgLR7IEHnoTa2v_Ef3rqqglxiKFSTZjXfGWr4N16FsvLNDoI8S1oi2M_keaKVgHIW_GFu4qfaVBL1SCe2abA1fv8Tud6LAlpJL77eFwA">
+</div>
+<div>
+<h4 class="font-label-md text-label-md text-primary">Ammoudi Fish Tavern</h4>
+<p class="text-body-sm text-on-surface-variant">Fresh catch by the Oia shoreline.</p>
+</div>
+</div>
+</div>
+</div>
+</aside>
+<!-- Itinerary Main Content -->
+<section class="md:col-span-8">
+<div class="bg-surface-container-lowest rounded-xl p-6 md:p-8 shadow-sm border border-outline-variant/30">
+<div class="flex items-center justify-between mb-8">
+<h3 class="font-headline-md text-headline-md">Itinerary</h3>
+<button class="flex items-center gap-2 text-secondary font-label-md hover:opacity-80 transition-opacity">
+<span class="material-symbols-outlined text-base" data-icon="download">download</span>
+                                Export PDF
+                            </button>
+</div>
+<!-- Days Timeline -->
+<div class="space-y-12">
+<!-- Day 1 -->
+<div class="relative pl-10 itinerary-line">
+<div class="absolute left-0 top-0 w-6 h-6 rounded-full bg-secondary text-on-secondary flex items-center justify-center font-label-sm z-10">1</div>
+<div class="flex flex-col gap-6">
+<div>
+<h4 class="font-headline-sm text-headline-sm">Arrival &amp; Sunset Gazing</h4>
+<p class="text-body-md text-on-surface-variant">Settling into the volcanic rhythm of the island.</p>
+</div>
+<div class="grid grid-cols-1 gap-4">
+<!-- Activity: Morning -->
+<div class="glass-card p-4 rounded-xl border border-secondary/10 flex gap-4 hover:shadow-md transition-shadow" style="opacity: 1; transform: translateY(0px); transition: 0.6s ease-out;">
+<div class="text-secondary font-label-md w-16 pt-1">09:00</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-sm" data-icon="flight_land">flight_land</span>
+<span class="font-label-md">Morning</span>
+</div>
+<p class="font-body-md text-on-background">Land at JTR Airport. Private transfer to Imerovigli. Check-in at Astra Suites.</p>
+</div>
+</div>
+<!-- Activity: Afternoon -->
+<div class="glass-card p-4 rounded-xl border border-secondary/10 flex gap-4 hover:shadow-md transition-shadow" style="opacity: 1; transform: translateY(0px); transition: 0.6s ease-out;">
+<div class="text-secondary font-label-md w-16 pt-1">14:00</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-sm" data-icon="hiking">hiking</span>
+<span class="font-label-md">Afternoon</span>
+</div>
+<p class="font-body-md text-on-background">Leisurely walk from Imerovigli towards Fira along the caldera edge. Stopped for iced coffee at a local cafe.</p>
+</div>
+</div>
+<!-- Activity: Evening -->
+<div class="glass-card p-4 rounded-xl border border-secondary/10 flex gap-4 hover:shadow-md transition-shadow" style="opacity: 1; transform: translateY(0px); transition: 0.6s ease-out;">
+<div class="text-secondary font-label-md w-16 pt-1">19:30</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-sm" data-icon="wine_bar">wine_bar</span>
+<span class="font-label-md">Evening</span>
+</div>
+<p class="font-body-md text-on-background">Welcome dinner at Selene. Wine pairing featuring local Assyrtiko grapes.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Day 2 -->
+<div class="relative pl-10 itinerary-line">
+<div class="absolute left-0 top-0 w-6 h-6 rounded-full bg-secondary text-on-secondary flex items-center justify-center font-label-sm z-10">2</div>
+<div class="flex flex-col gap-6">
+<div>
+<h4 class="font-headline-sm text-headline-sm">Sailing the Caldera</h4>
+<p class="text-body-md text-on-surface-variant">Exploring the island from the crystalline waters.</p>
+</div>
+<div class="grid grid-cols-1 gap-4">
+<!-- Activity: Full Day -->
+<div class="glass-card p-4 rounded-xl border border-secondary/10 flex gap-4 hover:shadow-md transition-shadow" style="opacity: 1; transform: translateY(0px); transition: 0.6s ease-out;">
+<div class="text-secondary font-label-md w-16 pt-1">10:00</div>
+<div class="flex-1">
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-sm" data-icon="sailing">sailing</span>
+<span class="font-label-md">Day Trip</span>
+</div>
+<p class="font-body-md text-on-background mb-4">Semi-private catamaran cruise. Visited the Red Beach and White Beach for swimming and snorkeling.</p>
+<img class="w-full h-48 object-cover rounded-lg" data-alt="A luxurious white catamaran sailing on the deep blue waters of the Santorini caldera. People are relaxing on the deck under a clear blue sky. The red volcanic cliffs are visible in the distance. The mood is adventurous yet calm and sophisticated." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBwaWrkz2vPVXgsnbHyOYiXKop_SX4ugmiVsK8hvCD9r5U8xYsLbZyuqvQXTHMnFTRKgXymGtSdTdI9QK_9K8RvVDpaOPb749YcaWD1d6PQ8EJDKehdhcu7GOcBEvYtRW32wZz6IwcnzNz52jHand2ZsCGtGSOlB67p7UjdD0ww_qnQE9HNH7DM-Ya02FpiKhorI-3HFtuphUYFhP0c8btRBLtSZ2MFU4OB4_1fdA-EJH-y3bQbeXTbNA">
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Day 3 (Simplified for brevity) -->
+<div class="relative pl-10">
+<div class="absolute left-0 top-0 w-6 h-6 rounded-full bg-secondary text-on-secondary flex items-center justify-center font-label-sm z-10">3</div>
+<div class="flex flex-col gap-4">
+<div>
+<h4 class="font-headline-sm text-headline-sm">Ancient Thera &amp; Oia</h4>
+<p class="text-body-md text-on-surface-variant">History and the quintessential blue dome shots.</p>
+</div>
+<button class="bg-surface-container-high hover:bg-surface-variant/50 text-on-surface-variant font-label-sm px-4 py-2 rounded-lg transition-colors w-fit">
+                                        Show full day details
+                                    </button>
+</div>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 py-2 pb-safe bg-surface/80 dark:bg-surface-container/80 backdrop-blur-xl shadow-lg rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-outline hover:bg-surface-variant/50 dark:hover:bg-surface-container-high/50 rounded-full px-4 py-1 active:scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="home">home</span>
+<span class="font-label-sm text-label-sm">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-outline hover:bg-surface-variant/50 dark:hover:bg-surface-container-high/50 rounded-full px-4 py-1 active:scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-label-sm text-label-sm">Social</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-secondary-container dark:bg-secondary text-on-secondary-container dark:text-on-secondary rounded-full px-4 py-1 active:scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="explore">explore</span>
+<span class="font-label-sm text-label-sm">Trips</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-outline hover:bg-surface-variant/50 dark:hover:bg-surface-container-high/50 rounded-full px-4 py-1 active:scale-90 transition-all duration-200" href="#">
+<span class="material-symbols-outlined" data-icon="person">person</span>
+<span class="font-label-sm text-label-sm">Profile</span>
+</a>
+</nav>
+<script>
+        // Micro-interaction for TopAppBar scroll effect
+        window.addEventListener('scroll', () => {
+            const header = document.getElementById('top-app-bar');
+            if (window.scrollY > 100) {
+                header.classList.add('scrolled-header');
+                header.classList.remove('bg-surface/80');
+                header.classList.add('bg-surface');
+            } else {
+                header.classList.remove('scrolled-header');
+                header.classList.add('bg-surface/80');
+                header.classList.remove('bg-surface');
+            }
+        });
+
+        // Simple animation on load for cards
+        document.addEventListener('DOMContentLoaded', () => {
+            const items = document.querySelectorAll('.glass-card');
+            items.forEach((item, index) => {
+                item.style.opacity = '0';
+                item.style.transform = 'translateY(20px)';
+                item.style.transition = 'all 0.6s ease-out';
+                setTimeout(() => {
+                    item.style.opacity = '1';
+                    item.style.transform = 'translateY(0)';
+                }, 100 * index);
+            });
+        });
+    </script>
+
+
+</body></html>

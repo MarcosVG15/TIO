@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+
+<html class="scroll-smooth" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>NomadAI - Social Hub</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Literata:wght@400;500;700&amp;family=Nunito+Sans:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">tailwind.config = {darkMode: "class", theme: {extend: {colors: {"secondary-fixed": "#ece1d3", "on-tertiary-fixed": "#4d3806", background: "#f7faf4", "surface-container-highest": "#dce5db", surface: "#f7faf4", "on-background": "#2c342e", "primary-fixed-dim": "#abe1b7", "outline-variant": "#abb4ac", "inverse-primary": "#bef5ca", "on-surface-variant": "#59615a", "on-tertiary": "#fff8f1", "surface-variant": "#dce5db", tertiary: "#745c27", "on-surface": "#2c342e", "secondary-container": "#ece1d3", "on-primary": "#e8ffe9", secondary: "#665e53", "on-secondary-fixed": "#453e34", "on-error": "#fff7f6", "on-error-container": "#6e0a12", "tertiary-fixed": "#fad998", "primary-container": "#b9efc5", outline: "#747d75", primary: "#386948", "tertiary-fixed-dim": "#ebcb8b", "on-primary-fixed-variant": "#346544", "on-tertiary-fixed-variant": "#6c5421", "tertiary-container": "#fad998", "surface-bright": "#f7faf4", "inverse-on-surface": "#9a9e99", "inverse-surface": "#0b0f0c", "surface-container-high": "#e3eae2", "on-primary-container": "#2a5b3b", "surface-dim": "#d3dcd3", "surface-container-lowest": "#ffffff", error: "#a83836", "surface-container": "#e9f0e8", "primary-fixed": "#b9efc5", "error-container": "#fa746f", "secondary-fixed-dim": "#ded3c5", "on-primary-fixed": "#15482a", "surface-container-low": "#f0f5ee", "on-tertiary-container": "#614b18", "on-secondary-container": "#585146", "on-secondary-fixed-variant": "#625a50", "on-secondary": "#fff8f2", "surface-tint": "#386948", "primary-dim": "#2b5d3c", "secondary-dim": "#595248", "tertiary-dim": "#67501c", "error-dim": "#67040d"}, borderRadius: {DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px"}, spacing: {base: "8px", "container-max": "1280px", gutter: "24px", "margin-desktop": "40px", "margin-mobile": "16px"}, fontFamily: {"body-sm": ["Be Vietnam Pro"], "label-md": ["Be Vietnam Pro"], "display-lg-mobile": ["Plus Jakarta Sans"], "headline-md": ["Plus Jakarta Sans"], "body-md": ["Be Vietnam Pro"], "body-lg": ["Be Vietnam Pro"], "display-lg": ["Plus Jakarta Sans"], "headline-sm": ["Plus Jakarta Sans"], "label-sm": ["Be Vietnam Pro"], headline: ["Literata"], display: ["Literata"], body: ["Nunito Sans"], label: ["Nunito Sans"]}, fontSize: {"body-sm": ["14px", {lineHeight: "20px", fontWeight: "400"}], "label-md": ["14px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "600"}], "display-lg-mobile": ["32px", {lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-md": ["24px", {lineHeight: "32px", fontWeight: "600"}], "body-md": ["16px", {lineHeight: "24px", fontWeight: "400"}], "body-lg": ["18px", {lineHeight: "28px", fontWeight: "400"}], "display-lg": ["48px", {lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-sm": ["20px", {lineHeight: "28px", fontWeight: "600"}], "label-sm": ["12px", {lineHeight: "14px", fontWeight: "500"}]}}}};</script>
+<style>
+        .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body-md min-h-screen pb-24">
+<!-- TopAppBar Shell -->
+<header class="fixed top-0 left-0 w-full z-50 flex items-center justify-between px-margin-mobile h-16 bg-surface/80 backdrop-blur-xl shadow-sm">
+<div class="flex items-center gap-2 active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-secondary text-2xl">travel_explore</span>
+</div>
+</header>
+<main class="pt-20 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto">
+<!-- Hero Section / Contextual Feature -->
+<section class="mb-gutter">
+<div class="relative w-full h-48 md:h-64 rounded-xl overflow-hidden shadow-sm group">
+<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent z-10"></div>
+<div class="absolute inset-0 bg-cover bg-center" data-alt="A cinematic, wide-angle landscape of a high-altitude mountain pass during golden hour. Soft amber light spills over jagged peaks, creating deep shadows and glowing edges. The sky is a gradient of violet and orange, conveying a sense of vast discovery and professional travel exploration. Minimalist and corporate modern in its high-contrast clarity." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAnvPh5USF0kBZvZc2W2TW9henUcTq342UxzHGXChdStbJrdE6xyGrYhMmVjR0eUx-ggZrb2OO0Mm1i51nHYK7UNjo7wv7cqWYgiTw8ojpFsAl5XwCNDIfefKiUs7Mp6G8eYcpocfoJF2to73DiZN2DXGWidtdbQLfJEcawckcYP2gse8xHFMQuS9Bz-NMi1-fSsoW9G9m-0HKj72njq2SZCQKZgllMXSp6gQS61vJoqAqGH6P8euHqcA')"></div>
+<div class="absolute bottom-4 left-4 z-20">
+<h1 class="font-headline-md text-headline-md text-white">Group Travel</h1>
+<p class="font-body-sm text-body-sm text-white/90">Combining preferences for the ultimate route</p>
+</div>
+<button class="absolute bottom-4 right-4 z-20 bg-secondary-fixed text-on-secondary-fixed-variant px-4 py-2 rounded-full font-label-md text-label-md flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all">
+                    Plan Together
+                    <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</button>
+</div>
+</section>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
+<!-- Left Side: Main Social Feed (8 columns on Desktop) -->
+<div class="lg:col-span-8 space-y-6">
+<!-- Feed Filter Chips -->
+<div class="flex items-center gap-3 overflow-x-auto hide-scrollbar pb-2">
+<button class="bg-secondary text-on-secondary px-5 py-2 rounded-full font-label-md text-label-md">Trending</button>
+<button class="bg-surface-container-high text-on-surface-variant px-5 py-2 rounded-full font-label-md text-label-md hover:bg-surface-container-highest transition-colors">Following</button>
+<button class="bg-surface-container-high text-on-surface-variant px-5 py-2 rounded-full font-label-md text-label-md hover:bg-surface-container-highest transition-colors">Solo Routes</button>
+<button class="bg-surface-container-high text-on-surface-variant px-5 py-2 rounded-full font-label-md text-label-md hover:bg-surface-container-highest transition-colors">Group Hits</button>
+</div>
+<!-- Post 1 -->
+<article class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow border border-outline-variant/30 transition-all duration-500 opacity-100 translate-y-0">
+<div class="p-4 flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-cover bg-center" data-alt="A professional headshot of a young female traveler with a friendly expression. She is outdoors with a soft bokeh background of a European city square. The lighting is bright and natural, aligning with a minimalist and corporate modern aesthetic. High-quality portraiture photography style." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuApml4BREnkV_66BMh9QNZHQAHnhkyx4Ji3q7SnBoCtgM_lNHWWt1EfbBJfsiMn-e2O8L8ZaC0TSnE7EnAfDzuXJ-4z20ZZl9e0gFS39WY-mQhFSONkCNmriThjv5JG2CQ-0mIMqa4S3ZizgaWcrIPvKawxlBEVg9eJHdco0uZv5zm8kPICfyQDAgXHREkrb05oUTkHaNCcp9sxC0n28leMb0OKyzBY8uff-qQZGwR1mfSuJSi4O8ANXw')"></div>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Elena Vance</p>
+<p class="font-label-sm text-label-sm text-outline">2 hours ago • Kyoto, Japan</p>
+</div>
+<button class="ml-auto material-symbols-outlined text-outline">more_vert</button>
+</div>
+<div class="relative h-[400px] w-full">
+<div class="absolute inset-0 bg-cover bg-center" data-alt="A breathtaking view of a red Torii gate in Kyoto during cherry blossom season. The frame is filled with soft pink petals and crisp traditional architecture. The lighting is ethereal and morning-soft, highlighting a sense of calm confidence and Wanderlust Blue tones. Professional travel photography with editorial composition." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDODpgXOa91favoLQmM9b1wZdtGTCOcTKvNxwdXS_JU2ETqk_6Hx6mmTEYGi-iL0ZbzENj5j34Kl44Em_JhJsvtnTEnxthbDiaouGJDxGF3HAmcR0XHfjWcFm21OaW-CwKDcDAHrutQ6apUxI5tsmcBMr3ohVXAOpqrb-sp2pnfeBsRmmiRO29u6KMMrPQyBTbLi3sfp4MS2faaZPprgu1bZqWLBpHCjGmzkPKGsZw9kgh6ETuFA8TvKg')"></div>
+</div>
+<div class="p-4">
+<p class="font-body-md text-body-md text-on-surface-variant mb-4">Just finished the ultimate AI-mapped cherry blossom route. The crowds were heavy, but NomadAI found a hidden shrine that was completely empty at sunrise! 🌸</p>
+<div class="flex items-center gap-6">
+<button class="flex items-center gap-2 text-on-surface-variant hover:text-secondary transition-colors group">
+<span class="material-symbols-outlined group-active:scale-125 transition-transform">favorite</span>
+<span class="font-label-sm text-label-sm">1.2k</span>
+</button>
+<button class="flex items-center gap-2 text-on-surface-variant hover:text-secondary transition-colors group">
+<span class="material-symbols-outlined group-active:scale-125 transition-transform">chat_bubble</span>
+<span class="font-label-sm text-label-sm">84</span>
+</button>
+<button class="flex items-center gap-2 text-on-surface-variant hover:text-secondary transition-colors group">
+<span class="material-symbols-outlined group-active:scale-125 transition-transform">share</span>
+<span class="font-label-sm text-label-sm">Invite to Trip</span>
+</button>
+</div>
+</div>
+</article>
+<!-- Post 2: Itinerary Style -->
+<article class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/30 relative overflow-hidden transition-all duration-500 opacity-100 translate-y-0">
+<div class="absolute top-0 right-0 p-4">
+<span class="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase">Shared Route</span>
+</div>
+<div class="flex items-center gap-3 mb-6">
+<div class="w-10 h-10 rounded-full bg-cover bg-center" data-alt="A portrait of a male digital nomad working in a lush outdoor cafe in Bali. He has a focused yet relaxed expression. The setting is vibrant with tropical greenery and warm, dappled sunlight. Modern, tech-forward, and professional aesthetic." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAHahuNoE3PubsnGcknZW0sqjX82CZlmvPC2GMSo_WyUyfl8D2WSu6Out5unog4n0xhDJ4NoW1QQfjVo4e-JqXJ0oIQEAMQjagoZ_gzp5hrXZsmAJIhNj4fyW8RdimvEVZ0hJGt0favLgcKkmIs4nuLI_GDF8DVAXB9ZLWrtMJQg9Mrm5gvwAPnqAsPEkxN6SVj8BfwwL5hkvcbfmmVlXQ3isnv7Vt_R-D5clQtN0bUgKGwOGO8axWu0Q')"></div>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Marcus Chen</p>
+<p class="font-label-sm text-label-sm text-outline">6 hours ago • Bali, Indonesia</p>
+</div>
+</div>
+<h3 class="font-headline-sm text-headline-sm text-on-surface mb-4">Digital Nomad: North Bali Loop</h3>
+<div class="relative pl-6 space-y-6">
+<div class="absolute left-[7px] top-2 bottom-2 w-0.5 bg-secondary/30"></div>
+<div class="relative">
+<div class="absolute -left-[23px] top-1 w-4 h-4 rounded-full border-4 border-surface-container-lowest bg-secondary"></div>
+<p class="font-label-md text-label-md">Ubud Jungle Co-working</p>
+<p class="font-body-sm text-body-sm text-outline">High speed fiber &amp; great coffee.</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[23px] top-1 w-4 h-4 rounded-full border-4 border-surface-container-lowest bg-secondary"></div>
+<p class="font-label-md text-label-md">Gitgit Waterfall Hike</p>
+<p class="font-body-sm text-body-sm text-outline">NomadAI suggest 7AM for zero crowds.</p>
+</div>
+<div class="relative">
+<div class="absolute -left-[23px] top-1 w-4 h-4 rounded-full border-4 border-surface-container-lowest bg-secondary"></div>
+<p class="font-label-md text-label-md">Lovina Dolphin Watch</p>
+<p class="font-body-sm text-body-sm text-outline">Sunset session with the crew.</p>
+</div>
+</div>
+<div class="mt-6 pt-6 border-t border-outline-variant/30 flex justify-between items-center">
+<div class="flex -space-x-2">
+<div class="w-8 h-8 rounded-full border-2 border-surface-container-lowest bg-cover bg-center" data-alt="Small round avatar image of a person smiling." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAIyQCzEZ88zrtJpKb0HAxTzuGwBck0VYUoFXTOYuccAaZdAta0luKIJl95hIJqzTbnkLNTb4kR1uNj0pFVqeLReunEMqBXIcfRP3wNES4P-F79O3foePTs_OV23cHhp8VWauZdrXKmQrqRtrGmv3g-ySRQKBbmb8nLUPB9pH37ivmm0X6Z-vp8_eGpjlV6P-k-CYfG_LRSsK76Os4QxgIWy6JgTnY33tf_0KqXtM8wZAjAz8EixlqORQ')"></div>
+<div class="w-8 h-8 rounded-full border-2 border-surface-container-lowest bg-cover bg-center" data-alt="Small round avatar image of a person with sunglasses." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBfZjWOuGB3vzUZ3SkBIUIRXoKkGQuoSFWKHCbdrkLU4U7hP8yUbn1eCmolQ8EcNBOsg_JW9oy-5ymshUgkEoR0zobwuanMSv5m2JDfE0XmousX619Dm1WJNaqcv5Jfqzn70LATPjoFcK4N1daGy4G84BogTtBSGDC9YYSqXm58CVp_4Dpe7J03BINoIenL1V0rXAWasYxIFLw41LwInr34iGXTXFRdHr_QSb6Sj20kO_lj1izRArgeAA')"></div>
+<div class="w-8 h-8 rounded-full border-2 border-surface-container-lowest bg-cover bg-center" data-alt="Small round avatar image of a person at the beach." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDw0YjTHBKynzgYlZE5VQ3A4ynX9AS8Xo77KZ5YyfPkyn8nXd__ERXbr6TTQRCTOEYTw6nm-Bb5oPCFajxjCGIMHKpdFhKGMExqQuHwd5zMKyQ2C3k7_DJ7kGf63dndCd3r0IdKhE8XUZdSGT8oJrrQ7brD5Mzt86le7zPw1sCo_f_c5dmaFGUyAooIdKsGNmjxXya96xVBW3fv0llLIFpL6SX5HOg5Oml-mddFcyiJ2tPfbD8DbBh9Jw')"></div>
+<div class="w-8 h-8 rounded-full border-2 border-surface-container-lowest bg-surface-container-highest flex items-center justify-center text-[10px] font-bold">+12</div>
+</div>
+<button class="text-secondary font-label-md text-label-md hover:underline">View Itinerary Details</button>
+</div>
+</article>
+</div>
+<!-- Right Side: Friends Section (4 columns on Desktop) -->
+<aside class="lg:col-span-4 space-y-6">
+<!-- Friends Panel -->
+<div class="bg-surface-container-lowest rounded-xl p-6 shadow-sm border border-outline-variant/30 sticky top-24">
+<div class="flex items-center justify-between mb-6">
+<h2 class="font-headline-sm text-headline-sm">Friends</h2>
+<button class="material-symbols-outlined text-on-surface-variant hover:text-secondary transition-colors">person_add</button>
+</div>
+<!-- Search Friends -->
+<div class="relative mb-6">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
+<input class="w-full pl-10 pr-4 py-2 bg-surface-container rounded-lg border-none focus:ring-2 focus:ring-secondary/20 font-body-sm text-body-sm" placeholder="Search friends..." type="text"/>
+</div>
+<!-- Friends List -->
+<div class="space-y-4">
+<!-- Friend 1 -->
+<div class="flex items-center gap-3 p-2 rounded-lg hover:bg-surface-container-low transition-colors group cursor-pointer">
+<div class="relative">
+<div class="w-12 h-12 rounded-full bg-cover bg-center" data-alt="A portrait of a male hiker in his 30s, wearing professional gear, against a background of misty mountains. The lighting is moody and adventurous, with cool Wanderlust Blue tones. Modern Explorer style." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuBgOL8B_5qw0ZQKK3ntZBLiTIUu-2bTcLyIfcSKBtBAyWDmpy5PnoTp1fxGngOMEPFGa5D9KfXc8jwgxUjMubvQhruCBPHIriiRySjf-141q59STxoL5olQQoMJ54nzLKU2NFRfe80v0peMoEIrk9WcoPIWeEFkqwZ2SI646g5o-buAFypiRKiSl2gnrP3E-ripeNO2hZcKqJb3nA_soWrhyRVpVxET5_Eta2m9fDNgoWc51fN5XE6cjQ')"></div>
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
+</div>
+<div class="flex-1">
+<p class="font-label-md text-label-md text-on-surface">Jameson Blake</p>
+<p class="font-body-sm text-body-sm text-outline">Active now</p>
+</div>
+<button class="opacity-0 group-hover:opacity-100 bg-secondary-container text-on-secondary-container p-2 rounded-full transition-all active:scale-90">
+<span class="material-symbols-outlined text-sm">flight_takeoff</span>
+</button>
+</div>
+<!-- Friend 2 -->
+<div class="flex items-center gap-3 p-2 rounded-lg hover:bg-surface-container-low transition-colors group cursor-pointer">
+<div class="relative">
+<div class="w-12 h-12 rounded-full bg-cover bg-center" data-alt="A stylish woman with a camera around her neck, standing in a vibrant street market in Morocco. Bright, warm colors and intricate patterns in the background. Editorial travel photography vibe." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuAqyDEPWAWk1PF4y08812MOTNe7ts9nNGKOa3uhv0SKYFgoX84b2E_9jyiTYzeY1fF2izUBt9UoC3w_-3_TJL6DCZDmQggUEmMo9UQECPhBBDKZFSImOTKy_8-hPtdSZYuinf2VSR6JNNa7oY1x8mvsFrGCKb3Ts4d31HMnc6xFj1CxB1cwuHqxsoDik3PwZlX6IQR5apx0cyImjCNPUCg_3DV8QHBFnyVMV1KjN9sM7yArfOoNvDpjAQ')"></div>
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
+</div>
+<div class="flex-1">
+<p class="font-label-md text-label-md text-on-surface">Sarah Oh</p>
+<p class="font-body-sm text-body-sm text-outline">Ready to travel</p>
+</div>
+<button class="opacity-0 group-hover:opacity-100 bg-secondary-container text-on-secondary-container p-2 rounded-full transition-all active:scale-90">
+<span class="material-symbols-outlined text-sm">flight_takeoff</span>
+</button>
+</div>
+<!-- Friend 3 -->
+<div class="flex items-center gap-3 p-2 rounded-lg hover:bg-surface-container-low transition-colors group cursor-pointer">
+<div class="relative">
+<div class="w-12 h-12 rounded-full bg-cover bg-center" data-alt="A man looking out over the sea from a balcony in Santorini. Crisp white buildings and intense blue water. High-key lighting, bright and airy professional travel aesthetic." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuB2MxYPJVuH7YqXTXQV1hnwKokxLWe2f284g2iyeM8K27YnyVdoRjklQI_nY4oX2Kwki7jcwA59z10AZg9lRKTn3hNPeGZiWXFTvx5L428x9vy4XTFcHkGjWXVcKOiaAYZZtmEHmV1Yq4s5Fmmswgu8CYMWbOJLXwyU8eZPZhDf-6fDimWl9LnxOHTRGYOHt9fz0SRREAXMu1ryIlE7Y2I3uVL2keVPR90K5ZVn0U28MjCUyOsJaNEV_g')"></div>
+<div class="absolute bottom-0 right-0 w-3 h-3 bg-surface-container-highest border-2 border-white rounded-full"></div>
+</div>
+<div class="flex-1">
+<p class="font-label-md text-label-md text-on-surface">Oliver Kent</p>
+<p class="font-body-sm text-body-sm text-outline">Away • Greece</p>
+</div>
+<button class="opacity-0 group-hover:opacity-100 bg-secondary-container text-on-secondary-container p-2 rounded-full transition-all active:scale-90">
+<span class="material-symbols-outlined text-sm">flight_takeoff</span>
+</button>
+</div>
+</div>
+<button class="w-full mt-8 py-3 bg-surface-container-high text-on-surface-variant rounded-xl font-label-md text-label-md flex items-center justify-center gap-2 hover:bg-surface-container-highest transition-colors active:scale-95">
+<span class="material-symbols-outlined text-lg">group_add</span>
+                        Invite More Friends
+                    </button>
+</div>
+</aside>
+</div>
+</main>
+<!-- BottomNavBar Shell -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 py-2 pb-safe bg-surface/80 backdrop-blur-xl shadow-lg rounded-t-xl">
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-variant/50 rounded-full px-4 py-1 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">home</span>
+<span class="font-label-sm text-label-sm">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-full px-4 py-1 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">group</span>
+<span class="font-label-sm text-label-sm">Social</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-variant/50 rounded-full px-4 py-1 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">explore</span>
+<span class="font-label-sm text-label-sm">Trips</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-variant/50 rounded-full px-4 py-1 transition-all active:scale-90 duration-200" href="#">
+<span class="material-symbols-outlined">person</span>
+<span class="font-label-sm text-label-sm">Profile</span>
+</a>
+</nav>
+<!-- Floating Action Button Contextual Logic -->
+<button class="fixed right-6 bottom-24 w-14 h-14 bg-secondary text-on-secondary rounded-full shadow-lg flex items-center justify-center active:scale-90 transition-transform z-40">
+<span class="material-symbols-outlined text-3xl">add</span>
+</button>
+<script>
+        // Micro-interaction for following status
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', function() {
+                if (this.innerText.includes('favorite')) {
+                    const icon = this.querySelector('.material-symbols-outlined');
+                    const fillValue = icon.style.fontVariationSettings.includes('FILL\' 1') ? 0 : 1;
+                    icon.style.fontVariationSettings = `'FILL' ${fillValue}`;
+                    if (fillValue === 1) {
+                        this.classList.add('text-secondary');
+                    } else {
+                        this.classList.remove('text-secondary');
+                    }
+                }
+            });
+        });
+
+        // Simple visibility observer for scroll animations
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('opacity-100', 'translate-y-0');
+                    entry.target.classList.remove('opacity-0', 'translate-y-4');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('article').forEach(card => {
+            card.classList.add('transition-all', 'duration-500', 'opacity-0', 'translate-y-4');
+            observer.observe(card);
+        });
+    </script>
+</body></html>

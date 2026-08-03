@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>NomadAI - Onboarding</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Literata:wght@400;500;700&amp;family=Nunito+Sans:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">tailwind.config = {darkMode: "class", theme: {extend: {colors: {"secondary-fixed": "#ece1d3", "on-tertiary-fixed": "#4d3806", background: "#f7faf4", "surface-container-highest": "#dce5db", surface: "#f7faf4", "on-background": "#2c342e", "primary-fixed-dim": "#abe1b7", "outline-variant": "#abb4ac", "inverse-primary": "#bef5ca", "on-surface-variant": "#59615a", "on-tertiary": "#fff8f1", "surface-variant": "#dce5db", tertiary: "#745c27", "on-surface": "#2c342e", "secondary-container": "#ece1d3", "on-primary": "#e8ffe9", secondary: "#665e53", "on-secondary-fixed": "#453e34", "on-error": "#fff7f6", "on-error-container": "#6e0a12", "tertiary-fixed": "#fad998", "primary-container": "#b9efc5", outline: "#747d75", primary: "#386948", "tertiary-fixed-dim": "#ebcb8b", "on-primary-fixed-variant": "#346544", "on-tertiary-fixed-variant": "#6c5421", "tertiary-container": "#fad998", "surface-bright": "#f7faf4", "inverse-on-surface": "#9a9e99", "inverse-surface": "#0b0f0c", "surface-container-high": "#e3eae2", "on-primary-container": "#2a5b3b", "surface-dim": "#d3dcd3", "surface-container-lowest": "#ffffff", error: "#a83836", "surface-container": "#e9f0e8", "primary-fixed": "#b9efc5", "error-container": "#fa746f", "secondary-fixed-dim": "#ded3c5", "on-primary-fixed": "#15482a", "surface-container-low": "#f0f5ee", "on-tertiary-container": "#614b18", "on-secondary-container": "#585146", "on-secondary-fixed-variant": "#625a50", "on-secondary": "#fff8f2", "surface-tint": "#386948", "primary-dim": "#2b5d3c", "secondary-dim": "#595248", "tertiary-dim": "#67501c", "error-dim": "#67040d"}, borderRadius: {DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px"}, spacing: {base: "8px", "container-max": "1280px", gutter: "24px", "margin-desktop": "40px", "margin-mobile": "16px"}, fontFamily: {"body-sm": ["Be Vietnam Pro"], "label-md": ["Be Vietnam Pro"], "display-lg-mobile": ["Plus Jakarta Sans"], "headline-md": ["Plus Jakarta Sans"], "body-md": ["Be Vietnam Pro"], "body-lg": ["Be Vietnam Pro"], "display-lg": ["Plus Jakarta Sans"], "headline-sm": ["Plus Jakarta Sans"], "label-sm": ["Be Vietnam Pro"], headline: ["Literata"], display: ["Literata"], body: ["Nunito Sans"], label: ["Nunito Sans"]}, fontSize: {"body-sm": ["14px", {lineHeight: "20px", fontWeight: "400"}], "label-md": ["14px", {lineHeight: "16px", letterSpacing: "0.05em", fontWeight: "600"}], "display-lg-mobile": ["32px", {lineHeight: "40px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-md": ["24px", {lineHeight: "32px", fontWeight: "600"}], "body-md": ["16px", {lineHeight: "24px", fontWeight: "400"}], "body-lg": ["18px", {lineHeight: "28px", fontWeight: "400"}], "display-lg": ["48px", {lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "700"}], "headline-sm": ["20px", {lineHeight: "28px", fontWeight: "600"}], "label-sm": ["12px", {lineHeight: "14px", fontWeight: "500"}]}}}};</script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            line-height: 1;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .selection-chip {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .selection-chip.active {
+            background-color: #86f2e4; /* secondary-container */
+            color: #006f66; /* on-secondary-container */
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 106, 97, 0.15);
+        }
+        .progress-container {
+            height: 4px;
+            background: #e0e3e5; /* surface-variant */
+            border-radius: 999px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #006a61; /* secondary */
+            transition: width 0.5s ease;
+        }
+        body {
+            background-color: #f7f9fb;
+            color: #191c1e;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="min-h-screen flex flex-col font-body-md text-body-md overflow-x-hidden">
+<!-- Top Navigation (Shell Suppressed Rule Applied: This is a task-focused onboarding screen) -->
+<header class="fixed top-0 left-0 w-full z-50 flex items-center justify-between px-margin-mobile md:px-margin-desktop h-16 bg-surface/80 backdrop-blur-xl">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary" style="font-variation-settings: 'FILL' 1;">travel_explore</span>
+<span class="font-display-lg-mobile text-headline-sm text-secondary tracking-tight">NomadAI</span>
+</div>
+<button class="flex items-center gap-1 text-on-surface-variant hover:text-secondary transition-colors font-label-md">
+<span>Skip</span>
+<span class="material-symbols-outlined text-[18px]">chevron_right</span>
+</button>
+</header>
+<!-- Main Content -->
+<main class="flex-grow flex items-center justify-center pt-20 pb-12 px-margin-mobile md:px-margin-desktop">
+<div class="w-full max-w-2xl">
+<!-- Progress Indicator -->
+<div class="mb-10">
+<div class="flex justify-between items-end mb-3">
+<p class="font-label-md text-secondary uppercase tracking-widest">Step 2 of 5</p>
+<p class="font-label-sm text-on-surface-variant">Getting to know you</p>
+</div>
+<div class="progress-container">
+<div class="progress-bar" style="width: 40%;"></div>
+</div>
+</div>
+<!-- Questionnaire Card -->
+<div class="glass-card rounded-xl p-8 md:p-12 shadow-sm relative overflow-hidden">
+<!-- Atmospheric Visual Background Element -->
+<div class="absolute -top-24 -right-24 w-64 h-64 bg-secondary-fixed/20 rounded-full blur-3xl -z-10"></div>
+<section class="space-y-10" id="question-container">
+<!-- Title & Subtitle -->
+<div class="space-y-4">
+<h1 class="font-headline-md text-display-lg-mobile md:text-headline-md leading-tight">
+                            Which describes your travel soul?
+                        </h1>
+<p class="text-on-surface-variant font-body-lg">
+                            We use this to curate your vibe. Are you a museum maven, a rave enthusiast, or a luxury seeker?
+                        </p>
+</div>
+<!-- Choice Chips (Bento-style Grid) -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<!-- Choice 1 -->
+<button class="selection-chip group flex items-start gap-4 p-5 rounded-xl border border-outline-variant bg-surface-container-lowest hover:border-secondary hover:bg-secondary-container/10 text-left" onclick="toggleSelection(this)">
+<div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center group-hover:bg-secondary-container">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-secondary-container">museum</span>
+</div>
+<div>
+<h3 class="font-label-md mb-1">Museum Maven</h3>
+<p class="text-body-sm text-on-surface-variant">You live for history, art galleries, and architectural wonders.</p>
+</div>
+</button>
+<!-- Choice 2 -->
+<button class="selection-chip group flex items-start gap-4 p-5 rounded-xl border border-outline-variant bg-surface-container-lowest hover:border-secondary hover:bg-secondary-container/10 text-left" onclick="toggleSelection(this)">
+<div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center group-hover:bg-secondary-container">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-secondary-container">celebration</span>
+</div>
+<div>
+<h3 class="font-label-md mb-1">Rave Enthusiast</h3>
+<p class="text-body-sm text-on-surface-variant">The night is young. You want festivals, clubs, and late-night street food.</p>
+</div>
+</button>
+<!-- Choice 3 -->
+<button class="selection-chip group flex items-start gap-4 p-5 rounded-xl border border-outline-variant bg-surface-container-lowest hover:border-secondary hover:bg-secondary-container/10 text-left" onclick="toggleSelection(this)">
+<div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center group-hover:bg-secondary-container">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-secondary-container">diamond</span>
+</div>
+<div>
+<h3 class="font-label-md mb-1">Luxury Seeker</h3>
+<p class="text-body-sm text-on-surface-variant">5-star comfort, private tours, and exclusive dining experiences.</p>
+</div>
+</button>
+<!-- Choice 4 -->
+<button class="selection-chip group flex items-start gap-4 p-5 rounded-xl border border-outline-variant bg-surface-container-lowest hover:border-secondary hover:bg-secondary-container/10 text-left" onclick="toggleSelection(this)">
+<div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center group-hover:bg-secondary-container">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-on-secondary-container">hiking</span>
+</div>
+<div>
+<h3 class="font-label-md mb-1">Wild Nomad</h3>
+<p class="text-body-sm text-on-surface-variant">Off-the-beaten-path trails, camping, and pure adrenaline.</p>
+</div>
+</button>
+</div>
+<!-- Secondary Question Chips -->
+<div class="space-y-6 pt-6 border-t border-surface-container-highest">
+<p class="font-label-md text-on-surface">Choose your travel rhythm:</p>
+<div class="flex flex-wrap gap-3">
+<button class="px-5 py-2 rounded-full border border-outline-variant text-body-sm hover:border-secondary transition-all selection-pill" onclick="togglePill(this)">Slow &amp; Steady</button>
+<button class="px-5 py-2 rounded-full border border-outline-variant text-body-sm hover:border-secondary transition-all selection-pill" onclick="togglePill(this)">Action Packed</button>
+<button class="px-5 py-2 rounded-full border border-outline-variant text-body-sm hover:border-secondary transition-all selection-pill" onclick="togglePill(this)">Spontaneous</button>
+<button class="px-5 py-2 rounded-full border border-outline-variant text-body-sm hover:border-secondary transition-all selection-pill" onclick="togglePill(this)">Highly Structured</button>
+</div>
+</div>
+</section>
+<!-- Footer Actions -->
+<div class="mt-12 flex flex-col md:flex-row items-center justify-between gap-6">
+<button class="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors font-label-md">
+<span class="material-symbols-outlined">arrow_back</span>
+<span>Previous</span>
+</button>
+<button class="w-full md:w-auto bg-secondary text-on-secondary px-10 py-4 rounded-full font-label-md shadow-md active:scale-95 transition-all flex items-center justify-center gap-2" id="next-btn">
+<span>Continue</span>
+<span class="material-symbols-outlined">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Decorative Image Section -->
+<div class="mt-12 grid grid-cols-3 gap-4 h-32 opacity-60">
+<div class="rounded-xl overflow-hidden shadow-sm hover:scale-105 transition-transform duration-500">
+<div class="w-full h-full" data-alt="A serene landscape of rolling green hills in Tuscany at sunrise, captured in a modern, clean travel photography style. The soft morning mist hugs the valleys, and the lighting is warm and golden, evoking a sense of calm discovery. The overall aesthetic is minimalist and high-end." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCMapxDNsyQeT3s6mSV60yj4dd4npF7OfinnGiTp9IMyaCURWChTAe58rfqnqJVZYS5VvqrH_O_S6RNxTcbe6zFhK_MSkMj3tORTMxRYu_kmc7hb9t4EpDs3AKhnzqbHsYhBfkT80SuLgAqNAc1tEpeQWiFwJ-Ayz1DTMw3TzuvD2jsnLetcXGhXf6KP2rSjRKm3c_ADGHMxjI6AHf3_vCzx-77VqCeyG5vDAgvAetUZDJTHJHJ0KI8hg')"></div>
+</div>
+<div class="rounded-xl overflow-hidden shadow-sm hover:scale-105 transition-transform duration-500">
+<div class="w-full h-full" data-alt="A futuristic, glass-fronted modern museum gallery with minimalist white walls and high ceilings. Large windows allow bright, natural light to flood the space. The scene is quiet and sophisticated, with a single abstract sculpture in the center, reflecting a tech-forward and professional design aesthetic." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuD4Udg5UJ1FsV5f72KO3mvzVJcM8idPqgxjl6xflmmI1tI9AObmes22n-JIBudF0RHGmLoedU5G9R6JlFuuFzaNHlARFRmWGxC6fMTuspysygY0SxJqzrofJvnLgYYrsFM8VXsYF-KM5aRJwoUa9VojdBS8KEG9bbmoaP-2KfAjWGUUrlOWSQVnTpX8jMZphj3_1Fp1GNKBS4FGmzlZYw5ThvrGeQmOfLYYMKafemLzkmz8c4r6ziXVlg')"></div>
+</div>
+<div class="rounded-xl overflow-hidden shadow-sm hover:scale-105 transition-transform duration-500">
+<div class="w-full h-full" data-alt="A vibrant and energetic night scene in a bustling Asian metropolis, with neon lights reflecting off rainy streets. The atmosphere is electric and inspired by high-quality street photography, featuring a palette of deep blues and vivid teals. The mood is adventurous and full of urban excitement." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCxvI2eRaQFI1LXBiITO25eTR3Sy2GbxCOvsWPd4V3B3w1EPv7Q2AEInuYr233KM4CscHfqxY3GorJWTdyQtMoj19PTcWb2-CRG3dPhewiQyw3hBFr0i1sFtYiXQsohKE6oeJfvxmpQDkVjpfwg3hDplLgZqZvpzr5wPaYzrG324EEuITD3s1lophtZgL9n-KpLyTaHdSVa9YCsYf6b4PFmEElF4728nwzLJqd5_ahuFP9YoSLfYGXc3Q')"></div>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer Credit (Minimal) -->
+<footer class="py-8 text-center text-on-surface-variant font-label-sm">
+<p>© 2024 NomadAI Travel Companion. All rights reserved.</p>
+</footer>
+<script>
+        function toggleSelection(element) {
+            // Multiple selection allowed for cards
+            element.classList.toggle('active');
+            
+            // Interaction effect
+            if (element.classList.contains('active')) {
+                const icon = element.querySelector('.material-symbols-outlined');
+                icon.style.fontVariationSettings = "'FILL' 1";
+            } else {
+                const icon = element.querySelector('.material-symbols-outlined');
+                icon.style.fontVariationSettings = "'FILL' 0";
+            }
+        }
+
+        function togglePill(element) {
+            // Radio style selection for pills
+            const parent = element.parentElement;
+            parent.querySelectorAll('.selection-pill').forEach(pill => {
+                pill.classList.remove('bg-secondary', 'text-on-secondary', 'border-secondary');
+                pill.classList.add('border-outline-variant');
+            });
+            
+            element.classList.remove('border-outline-variant');
+            element.classList.add('bg-secondary', 'text-on-secondary', 'border-secondary');
+        }
+
+        // Simple button click ripple/feedback
+        document.getElementById('next-btn').addEventListener('click', function() {
+            this.innerHTML = `
+                <span class="material-symbols-outlined animate-spin">progress_activity</span>
+                <span>Saving...</span>
+            `;
+            setTimeout(() => {
+                alert('Your travel style has been saved! Proceeding to the next step.');
+                location.reload(); // Simulate next step
+            }, 1000);
+        });
+    </script>
+</body></html>
