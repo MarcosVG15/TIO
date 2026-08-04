@@ -1,0 +1,45 @@
+services:
+  db:
+    # Postgres 16 with pgvector already compiled in - no CREATE EXTENSION
+    # install step needed.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tio_database
+    ports:
+      # 5433 on the host so this never clashes with a local Postgres.
+      - "5433:5432"
+    volumes:
+      - tio_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tio_database"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # Overrides whatever DATABASE_URL is in .env: inside the compose
+      # network the database is reachable as "db", not as an external IP.
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/tio_database
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/tio_database
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  tio_pgdata:

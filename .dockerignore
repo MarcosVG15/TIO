@@ -1,0 +1,19 @@
+# Secrets are mounted at runtime via env_file - never baked into the image.
+.env
+
+.git
+.gitignore
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
