@@ -72,8 +72,14 @@ class OnboardingOut(BaseModel):
 
 
 class OnboardingStatusOut(BaseModel):
+    #: The routing gate the frontend reads. False sends the user into the
+    #: onboarding flow, true sends them to the home screen.
+    onboarding_completed: bool
+    #: Whether a Personality row actually exists.
     has_profile: bool
     embedding_status: Optional[str] = None
+    #: Whether the personality vector has been computed - recommendations are
+    #: weak until this is true.
     ready: bool
 
 

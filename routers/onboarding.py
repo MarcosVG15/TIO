@@ -51,7 +51,15 @@ def onboarding_status(
     generic fallback rather than an empty state.
 
     Not an error case: a brand new account legitimately has no profile.
+
+    onboarding_completed is forced true while submit_onboarding is
+    unimplemented. Reporting false would send every user into a flow that
+    cannot be finished, stranding them there. Once the pipeline works this
+    must become `has_profile`.
     """
-    # No profile can exist yet - submit_onboarding is unimplemented - so this
-    # is the truthful answer, not a placeholder.
-    return OnboardingStatusOut(has_profile=False, embedding_status=None, ready=False)
+    return OnboardingStatusOut(
+        onboarding_completed=True,
+        has_profile=False,
+        embedding_status=None,
+        ready=False,
+    )
