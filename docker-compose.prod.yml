@@ -20,7 +20,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # No ports. Nothing outside this network can reach Postgres.
+    ports:
+      # Bound to 127.0.0.1 so the port exists on the server's loopback only -
+      # never on a public interface. Reach it with an SSH tunnel:
+      #   ssh -L 5433:localhost:5433 ubuntu@tio.agency
+      # Dropping the "127.0.0.1:" prefix would expose Postgres to the internet,
+      # because Docker writes its own iptables rules and bypasses UFW.
+      - "127.0.0.1:5433:5432"
 
   api:
     build: .
