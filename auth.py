@@ -61,6 +61,17 @@ def _session_secret() -> str:
     return secret
 
 
+def validate_config() -> None:
+    """Fail at startup rather than mid-request.
+
+    Without this a blank SESSION_SECRET only surfaces when someone signs up -
+    after their account has already been committed, leaving them unable to
+    retry because the email is now taken.
+    """
+    _session_secret()
+    allowed_audiences()
+
+
 def verify_google_token(raw_token: str) -> GoogleClaims:
     """Cryptographically verify a Google ID token and return its claims.
 

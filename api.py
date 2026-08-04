@@ -10,9 +10,21 @@ there is no cross-origin request to allow.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, FastAPI
 
+import auth as auth_config
 from routers import auth, onboarding, profile, trips
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Refuse to start on bad configuration. A boot failure in the deploy log
+    # beats a 500 the first time a real user tries to sign up.
+    auth_config.validate_config()
+    yield
+
 
 app = FastAPI(
     title="TIO",
@@ -21,6 +33,7 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 api = APIRouter(prefix="/api")

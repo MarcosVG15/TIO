@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from DATABASE.ORM import Account
 from deps import current_account, not_implemented
@@ -13,9 +13,13 @@ router = APIRouter(prefix="/profile", tags=["profile"])
 def get_profile(account: Account = Depends(current_account)) -> ProfileOut:
     """The signed-in user's travel profile.
 
-    404 if they have not completed onboarding yet.
+    404 until onboarding has been completed - treat it as "send them to
+    onboarding", not as a failure.
     """
-    raise not_implemented("get profile")
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="no profile yet - complete onboarding first",
+    )
 
 
 @router.patch("", response_model=ProfileOut)

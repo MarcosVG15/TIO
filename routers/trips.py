@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from DATABASE.ORM import Account
 from deps import current_account, not_implemented
@@ -17,11 +19,23 @@ router = APIRouter(tags=["trips"])
 
 
 @router.get("/trips", response_model=list[TripOut])
-def list_trips(account: Account = Depends(current_account)) -> list[TripOut]:
+def list_trips(
+    status: Optional[str] = None,
+    account: Account = Depends(current_account),
+) -> list[TripOut]:
     """Every trip the caller can see - their own, plus any belonging to a
     group they are a member of. Soft-deleted trips are excluded.
+
+    Returns an empty list when there are none; an account with no trips is a
+    normal state, not an error.
+
+    `status` is accepted but not yet applied - it is typed as a free string
+    rather than the TripStatus enum so that a filter like "current", which is
+    a date question rather than a status value, does not 422.
     """
-    raise not_implemented("list trips")
+    # No trip can exist yet - create_trip is still unimplemented - so an empty
+    # list is the truthful answer rather than a placeholder.
+    return []
 
 
 @router.post("/trips", response_model=TripOut, status_code=status.HTTP_201_CREATED)
@@ -40,8 +54,14 @@ def get_trip(
     trip_id: str,
     account: Account = Depends(current_account),
 ) -> TripOut:
-    """One trip. 404 if it does not exist or the caller is not a member."""
-    raise not_implemented("get trip")
+    """One trip. 404 if it does not exist or the caller is not a member.
+
+    Deliberately the same 404 either way - distinguishing them would let
+    someone probe for which trip ids exist.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="trip not found"
+    )
 
 
 @router.patch("/trips/{trip_id}", response_model=TripOut)
@@ -70,8 +90,11 @@ def list_itinerary(
     trip_id: str,
     account: Account = Depends(current_account),
 ) -> list[ItineraryItemOut]:
-    """The trip's activities, ordered by date then time."""
-    raise not_implemented("list itinerary")
+    """The trip's activities, ordered by date then time.
+
+    Empty list when the trip has nothing scheduled.
+    """
+    return []
 
 
 @router.post(

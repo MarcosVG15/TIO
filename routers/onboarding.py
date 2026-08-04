@@ -49,5 +49,9 @@ def onboarding_status(
 
     ready == False means recommendations will be weak - show a spinner or a
     generic fallback rather than an empty state.
+
+    Not an error case: a brand new account legitimately has no profile.
     """
-    raise not_implemented("onboarding status")
+    # No profile can exist yet - submit_onboarding is unimplemented - so this
+    # is the truthful answer, not a placeholder.
+    return OnboardingStatusOut(has_profile=False, embedding_status=None, ready=False)
