@@ -193,6 +193,12 @@ class GroupRole(str, enum.Enum):
     MEMBER = "member"
 
 
+class PostVisibility(str, enum.Enum):
+    PUBLIC = "public"
+    FOLLOWERS = "followers"
+    PRIVATE = "private"
+
+
 class SoftDeleteMixin:
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
@@ -249,6 +255,24 @@ class Account(SoftDeleteMixin, Base):
         back_populates="account", cascade="all, delete-orphan"
     )
     messages: Mapped[list["Message"]] = relationship(back_populates="sender")
+    owned_trips: Mapped[list["Trip"]] = relationship(back_populates="owner")
+    posts: Mapped[list["Post"]] = relationship(
+        back_populates="author", cascade="all, delete-orphan"
+    )
+    post_likes: Mapped[list["PostLike"]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
+    # Two relationships over one table, so the FK has to be named explicitly.
+    following: Mapped[list["Follow"]] = relationship(
+        foreign_keys="Follow.follower_id",
+        back_populates="follower",
+        cascade="all, delete-orphan",
+    )
+    followers: Mapped[list["Follow"]] = relationship(
+        foreign_keys="Follow.followee_id",
+        back_populates="followee",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Account {self.email}>"
@@ -432,6 +456,7 @@ class Location(Base):
         back_populates="shared_location"
     )
     memories: Mapped[list["TripMemory"]] = relationship(back_populates="location")
+    posts: Mapped[list["Post"]] = relationship(back_populates="location")
 
 
 class Trip(SoftDeleteMixin, Base):
@@ -449,9 +474,17 @@ class Trip(SoftDeleteMixin, Base):
             name="group_trip_needs_group",
         ),
         Index("ix_trips_group_id_start_date", "group_id", "start_date"),
+        Index("ix_trips_owner_account_id", "owner_account_id"),
     )
 
     trip_id: Mapped[uuid.UUID] = _uuid_pk()
+    # Who created it. Required, including for group trips - without this a
+    # solo trip belongs to nobody and "list my trips" is unanswerable.
+    # RESTRICT rather than CASCADE: deleting an account must never silently
+    # take its trips (and their History vectors) with it.
+    owner_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="RESTRICT"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     origin_location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         "origin_location", ForeignKey("locations.location_id", ondelete="SET NULL")
@@ -480,10 +513,12 @@ class Trip(SoftDeleteMixin, Base):
         onupdate=func.now(),
     )
 
+    owner: Mapped["Account"] = relationship(back_populates="owned_trips")
     group: Mapped[Optional["Group"]] = relationship(back_populates="trips")
     origin_location: Mapped[Optional["Location"]] = relationship(
         back_populates="origin_of_trips"
     )
+    posts: Mapped[list["Post"]] = relationship(back_populates="trip")
     itinerary_items: Mapped[list["ItineraryItem"]] = relationship(
         back_populates="trip",
         cascade="all, delete-orphan",
@@ -591,6 +626,105 @@ class History(Base):
     trip: Mapped["Trip"] = relationship(back_populates="history")
 
 
+class Post(SoftDeleteMixin, Base):
+    """Something a traveller shares - a photo, a note, a finished trip."""
+
+    __tablename__ = "posts"
+    __table_args__ = (
+        CheckConstraint(
+            "caption IS NOT NULL OR media_url IS NOT NULL",
+            name="post_has_content",
+        ),
+        # Feed queries are newest-first, per author and globally.
+        Index("ix_posts_account_id_created_at", "account_id", "created_at"),
+        Index("ix_posts_created_at", "created_at"),
+    )
+
+    post_id: Mapped[uuid.UUID] = _uuid_pk()
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), nullable=False
+    )
+    #: Optional - a post can be about a trip, a place, or neither.
+    trip_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("trips.trip_id", ondelete="SET NULL")
+    )
+    location_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("locations.location_id", ondelete="SET NULL")
+    )
+
+    caption: Mapped[Optional[str]] = mapped_column(Text)
+    media_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    visibility: Mapped[PostVisibility] = mapped_column(
+        _pg_enum(PostVisibility, "post_visibility"),
+        nullable=False,
+        default=PostVisibility.PUBLIC,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    author: Mapped["Account"] = relationship(back_populates="posts")
+    trip: Mapped[Optional["Trip"]] = relationship(back_populates="posts")
+    location: Mapped[Optional["Location"]] = relationship(back_populates="posts")
+    likes: Mapped[list["PostLike"]] = relationship(
+        back_populates="post", cascade="all, delete-orphan"
+    )
+
+
+class PostLike(Base):
+    """A like. The composite primary key is what stops double-liking."""
+
+    __tablename__ = "post_likes"
+
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.post_id", ondelete="CASCADE"), primary_key=True
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    post: Mapped["Post"] = relationship(back_populates="likes")
+    account: Mapped["Account"] = relationship(back_populates="post_likes")
+
+
+class Follow(Base):
+    """A one-way follow. Mutual following is simply two rows."""
+
+    __tablename__ = "follows"
+    __table_args__ = (
+        CheckConstraint("follower_id <> followee_id", name="no_self_follow"),
+        # The reverse lookup - "who follows this person" - needs its own index
+        # because the primary key only sorts by follower.
+        Index("ix_follows_followee_id", "followee_id"),
+    )
+
+    follower_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    )
+    followee_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    follower: Mapped["Account"] = relationship(
+        foreign_keys=[follower_id], back_populates="following"
+    )
+    followee: Mapped["Account"] = relationship(
+        foreign_keys=[followee_id], back_populates="followers"
+    )
+
+
 __all__ = [
     "Base",
     "EMBEDDING_DIM",
@@ -610,6 +744,9 @@ __all__ = [
     "ItineraryItem",
     "TripMemory",
     "History",
+    "Post",
+    "PostLike",
+    "Follow",
     "AuthProvider",
     "TripStatus",
     "MessageType",
@@ -617,4 +754,5 @@ __all__ = [
     "BookingStatus",
     "TicketRequirement",
     "GroupRole",
+    "PostVisibility",
 ]

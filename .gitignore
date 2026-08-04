@@ -1,2 +1,16 @@
 .env
 venv
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+.DS_Store
+Thumbs.db

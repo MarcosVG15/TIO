@@ -10,12 +10,35 @@ there is no cross-origin request to allow.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 import auth as auth_config
-from routers import auth, onboarding, profile, trips
+from routers import (
+    auth,
+    conversations,
+    discovery,
+    onboarding,
+    profile,
+    social,
+    trips,
+)
+
+
+def _dev_origins() -> list[str]:
+    """Origins allowed to call the API cross-origin.
+
+    Production does not need this: tio.agency serves the frontend and the API
+    from the same origin, so the browser never does a CORS check. It exists
+    only for external dev previews (Lovable, a local Vite server) which live
+    on a different domain. Empty by default - nothing is permitted unless
+    explicitly listed.
+    """
+    raw = os.getenv("ALLOWED_ORIGINS", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
 @asynccontextmanager
@@ -36,11 +59,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+if _dev_origins():
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_dev_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 api = APIRouter(prefix="/api")
 api.include_router(auth.router)
 api.include_router(onboarding.router)
 api.include_router(profile.router)
 api.include_router(trips.router)
+api.include_router(conversations.router)
+api.include_router(social.router)
+api.include_router(discovery.router)
 app.include_router(api)
 
 

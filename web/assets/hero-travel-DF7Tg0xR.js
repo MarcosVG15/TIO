@@ -1,0 +1,1 @@
+var e=`/assets/hero-travel-PIjEt8eM.jpg`;export{e as t};
