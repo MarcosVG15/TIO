@@ -208,12 +208,29 @@ class SoftDeleteMixin:
 
 class Account(SoftDeleteMixin, Base):
     __tablename__ = "accounts"
+    __table_args__ = (
+        # An account is reachable exactly one way: an external provider subject
+        # (user_id) or a local password. Neither is required of the other.
+        CheckConstraint(
+            "(auth_provider = 'email' AND password_hash IS NOT NULL)"
+            " OR (auth_provider <> 'email' AND user_id IS NOT NULL)",
+            name="credentials_match_provider",
+        ),
+    )
 
     account_id: Mapped[uuid.UUID] = _uuid_pk()
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # NULL for email/password accounts - there is no external subject id.
+    # Postgres allows many NULLs under a UNIQUE constraint.
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True)
+    # NULL for provider accounts - Google holds the credential, not us.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     surname: Mapped[Optional[str]] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    # Google asserts this for us; email signups start False.
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # Attribute renamed: `metadata` is reserved on a declarative class.
     account_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default="{}"

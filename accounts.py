@@ -34,6 +34,7 @@ def get_or_create_from_google(claims: GoogleClaims) -> Account:
             account.email = claims.email
             account.name = _display_name(claims)
             account.surname = claims.family_name
+            account.email_verified = claims.email_verified
             # A returning user whose account was soft-deleted is revived.
             account.deleted_at = None
             return account
@@ -52,6 +53,7 @@ def get_or_create_from_google(claims: GoogleClaims) -> Account:
             email=claims.email,
             name=_display_name(claims),
             surname=claims.family_name,
+            email_verified=claims.email_verified,
             auth_provider=AuthProvider.GOOGLE,
             account_metadata={"picture": claims.picture} if claims.picture else {},
         )
