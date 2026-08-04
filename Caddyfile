@@ -1,0 +1,32 @@
+{
+	# Uncomment and set a real address to get Let's Encrypt expiry warnings.
+	# email you@tio.agency
+}
+
+www.tio.agency {
+	redir https://tio.agency{uri} permanent
+}
+
+tio.agency {
+	encode zstd gzip
+
+	# The API. handle (not handle_path) keeps the /api prefix, because the
+	# FastAPI routers are already mounted under /api.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# Liveness probe lives outside /api.
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# Everything else is the web app. try_files sends unknown paths to
+	# index.html so client-side routes like /login and /trips work on a hard
+	# refresh instead of 404ing.
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
