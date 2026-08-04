@@ -6,7 +6,13 @@ import accounts
 from auth import AuthError, create_session_token, verify_google_token
 from DATABASE.ORM import Account
 from deps import current_account
-from schemas import AccountOut, GoogleSignInRequest, SessionOut
+from schemas import (
+    AccountOut,
+    GoogleSignInRequest,
+    SessionOut,
+    SignInRequest,
+    SignUpRequest,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -40,6 +46,47 @@ def google_sign_in(payload: GoogleSignInRequest) -> SessionOut:
     except accounts.AccountConflict as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    token, expires_in = create_session_token(account.account_id)
+    return SessionOut(
+        access_token=token, expires_in=expires_in, account=to_account_out(account)
+    )
+
+
+@router.post("/sign-up", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
+def sign_up(payload: SignUpRequest) -> SessionOut:
+    """Register with an email address and password.
+
+    Returns a session token immediately - the address is recorded as
+    unverified rather than blocking sign-in.
+    """
+    try:
+        account = accounts.create_with_password(
+            email=payload.email,
+            password=payload.password,
+            name=payload.name,
+            surname=payload.surname,
+        )
+    except accounts.AccountConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    token, expires_in = create_session_token(account.account_id)
+    return SessionOut(
+        access_token=token, expires_in=expires_in, account=to_account_out(account)
+    )
+
+
+@router.post("/sign-in", response_model=SessionOut)
+def sign_in(payload: SignInRequest) -> SessionOut:
+    """Sign in with an email address and password."""
+    try:
+        account = accounts.authenticate(payload.email, payload.password)
+    except accounts.InvalidCredentials as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
         ) from exc
 
     token, expires_in = create_session_token(account.account_id)

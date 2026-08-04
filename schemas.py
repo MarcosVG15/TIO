@@ -10,8 +10,9 @@ from datetime import date, time
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
+import passwords
 from DATABASE.ORM import ActivityType, BookingStatus, TripStatus
 
 # ---------------------------------------------------------------------------
@@ -21,6 +22,22 @@ from DATABASE.ORM import ActivityType, BookingStatus, TripStatus
 
 class GoogleSignInRequest(BaseModel):
     id_token: str
+
+
+class SignUpRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(
+        min_length=passwords.MIN_LENGTH, max_length=passwords.MAX_LENGTH
+    )
+    name: str = Field(min_length=1, max_length=120)
+    surname: Optional[str] = Field(default=None, max_length=120)
+
+
+class SignInRequest(BaseModel):
+    email: EmailStr
+    # No min_length here - rejecting a short password before checking it would
+    # tell an attacker the length rule, and the answer is "wrong" either way.
+    password: str = Field(min_length=1, max_length=passwords.MAX_LENGTH)
 
 
 class AccountOut(BaseModel):
