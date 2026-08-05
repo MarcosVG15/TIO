@@ -39,6 +39,48 @@ def print_ddl() -> None:
         print(str(CreateTable(table).compile(dialect=dialect)).strip() + ";\n")
 
 
+def drop_everything(engine: Engine) -> None:
+    """Drop every table and enum in the public schema.
+
+    Not Base.metadata.drop_all(): that only knows about models currently in
+    ORM.py, so a table whose model has been deleted survives as an orphan -
+    and its foreign keys then block dropping the tables that ARE known
+    ("cannot drop table accounts because other objects depend on it").
+
+    CASCADE handles the ordering, so no dependency sort is needed. Enum types
+    are dropped separately because Postgres does not remove them with their
+    tables. Only typtype='e' is targeted, leaving pgvector's `vector` type
+    and the extension itself intact.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                DECLARE r RECORD;
+                BEGIN
+                    FOR r IN
+                        SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+                    LOOP
+                        EXECUTE format('DROP TABLE IF EXISTS public.%I CASCADE',
+                                       r.tablename);
+                    END LOOP;
+
+                    FOR r IN
+                        SELECT t.typname
+                        FROM pg_type t
+                        JOIN pg_namespace n ON n.oid = t.typnamespace
+                        WHERE n.nspname = 'public' AND t.typtype = 'e'
+                    LOOP
+                        EXECUTE format('DROP TYPE IF EXISTS public.%I CASCADE',
+                                       r.typname);
+                    END LOOP;
+                END $$;
+                """
+            )
+        )
+
+
 def report(engine: Engine) -> None:
     existing = set(inspect(engine).get_table_names())
     print("\nTables:")
@@ -84,8 +126,8 @@ def main() -> int:
     try:
         enable_pgvector(engine)
         if args.drop:
-            print("[drop] dropping all TIO tables and enum types ...")
-            Base.metadata.drop_all(engine)
+            print("[drop] dropping every table and enum in the public schema ...")
+            drop_everything(engine)
         Base.metadata.create_all(engine)
         print("[ok]   schema created")
         report(engine)
