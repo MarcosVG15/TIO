@@ -291,16 +291,8 @@ class Account(SoftDeleteMixin, Base):
         back_populates="addressee",
         cascade="all, delete-orphan",
     )
-    # Two relationships over one table, so the FK has to be named explicitly.
-    following: Mapped[list["Follow"]] = relationship(
-        foreign_keys="Follow.follower_id",
-        back_populates="follower",
-        cascade="all, delete-orphan",
-    )
-    followers: Mapped[list["Follow"]] = relationship(
-        foreign_keys="Follow.followee_id",
-        back_populates="followee",
-        cascade="all, delete-orphan",
+    post_comments: Mapped[list["PostComment"]] = relationship(
+        back_populates="author", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -698,6 +690,9 @@ class Post(SoftDeleteMixin, Base):
             "caption IS NOT NULL OR media_url IS NOT NULL",
             name="post_has_content",
         ),
+        CheckConstraint(
+            "rating IS NULL OR rating BETWEEN 1 AND 5", name="rating_range"
+        ),
         # Feed queries are newest-first, per author and globally.
         Index("ix_posts_account_id_created_at", "account_id", "created_at"),
         Index("ix_posts_created_at", "created_at"),
@@ -717,6 +712,9 @@ class Post(SoftDeleteMixin, Base):
 
     caption: Mapped[Optional[str]] = mapped_column(Text)
     media_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    #: How the author rated the place, 1-5. Distinct from History.rating_trip,
+    #: which scores a whole trip for the recommendation vectors.
+    rating: Mapped[Optional[int]] = mapped_column(SmallInteger)
     visibility: Mapped[PostVisibility] = mapped_column(
         _pg_enum(PostVisibility, "post_visibility"),
         nullable=False,
@@ -736,6 +734,9 @@ class Post(SoftDeleteMixin, Base):
     trip: Mapped[Optional["Trip"]] = relationship(back_populates="posts")
     location: Mapped[Optional["Location"]] = relationship(back_populates="posts")
     likes: Mapped[list["PostLike"]] = relationship(
+        back_populates="post", cascade="all, delete-orphan"
+    )
+    comments: Mapped[list["PostComment"]] = relationship(
         back_populates="post", cascade="all, delete-orphan"
     )
 
@@ -807,33 +808,32 @@ class Friendship(Base):
     )
 
 
-class Follow(Base):
-    """A one-way follow. Mutual following is simply two rows."""
+class PostComment(Base):
+    """A comment on a post.
 
-    __tablename__ = "follows"
+    Hard-deleted rather than soft: nothing references a comment, so keeping
+    tombstones would only complicate the count on every feed row.
+    """
+
+    __tablename__ = "post_comments"
     __table_args__ = (
-        CheckConstraint("follower_id <> followee_id", name="no_self_follow"),
-        # The reverse lookup - "who follows this person" - needs its own index
-        # because the primary key only sorts by follower.
-        Index("ix_follows_followee_id", "followee_id"),
+        Index("ix_post_comments_post_id_created_at", "post_id", "created_at"),
     )
 
-    follower_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    comment_id: Mapped[uuid.UUID] = _uuid_pk()
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
     )
-    followee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), nullable=False
     )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    follower: Mapped["Account"] = relationship(
-        foreign_keys=[follower_id], back_populates="following"
-    )
-    followee: Mapped["Account"] = relationship(
-        foreign_keys=[followee_id], back_populates="followers"
-    )
+    post: Mapped["Post"] = relationship(back_populates="comments")
+    author: Mapped["Account"] = relationship(back_populates="post_comments")
 
 
 __all__ = [
@@ -857,7 +857,7 @@ __all__ = [
     "History",
     "Post",
     "PostLike",
-    "Follow",
+    "PostComment",
     "Friendship",
     "AuthProvider",
     "TripStatus",

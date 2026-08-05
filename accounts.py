@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 
 import passwords
 from auth import GoogleClaims
-from DATABASE.ORM import Account, AuthProvider, session_scope
+from DATABASE.ORM import (
+    Account,
+    AuthProvider,
+    Friendship,
+    FriendshipStatus,
+    ItineraryItem,
+    Trip,
+    session_scope,
+)
 
 
 class AccountConflict(Exception):
@@ -218,14 +226,91 @@ def authenticate(email: str, password: str) -> Account:
         return account
 
 
-def _person(account: Account) -> dict[str, Optional[str]]:
-    """The public view of someone else - never their email address."""
+def _person(
+    account: Account,
+    friendship: Optional[str] = None,
+    shared_destinations: int = 0,
+) -> dict[str, Any]:
+    """The public view of someone else - never their email address.
+
+    friendshipStatus lets the UI pick between "Add friend", "Requested",
+    "Accept" and "Friends" without a second round trip per person.
+    """
     return {
         "id": str(account.account_id),
         "name": account.name,
         "handle": (account.email or "").split("@")[0],
         "avatarUrl": (account.account_metadata or {}).get("picture"),
+        "friendshipStatus": friendship,
+        "sharedDestinations": shared_destinations,
     }
+
+
+def _friendship_map(session, account_id: UUID) -> dict[UUID, str]:
+    """Everyone this account has any friendship row with, and its state.
+
+    Queried here rather than through friends.py to avoid an import cycle -
+    friends.py already depends on _person.
+    """
+    rows = session.execute(
+        select(
+            Friendship.requester_id,
+            Friendship.addressee_id,
+            Friendship.status,
+        ).where(
+            or_(
+                Friendship.requester_id == account_id,
+                Friendship.addressee_id == account_id,
+            )
+        )
+    ).all()
+
+    result: dict[UUID, str] = {}
+    for requester, addressee, status in rows:
+        other = addressee if requester == account_id else requester
+        if status == FriendshipStatus.ACCEPTED:
+            result[other] = "friends"
+        elif status == FriendshipStatus.PENDING:
+            # Direction matters: one shows "Requested", the other "Accept".
+            result[other] = "pending_out" if requester == account_id else "pending_in"
+        elif status == FriendshipStatus.BLOCKED:
+            result[other] = "blocked"
+    return result
+
+
+def _shared_destination_counts(session, account_id: UUID) -> dict[UUID, int]:
+    """How many of my destinations each other traveller also has planned.
+
+    A trip's destinations are its itinerary items' locations - Trip itself
+    only records an origin, so there is nowhere else to read this from.
+    Returns {} when I have no itinerary yet, which is the common case until
+    trip planning is built.
+    """
+    mine = select(ItineraryItem.location_id).join(
+        Trip, Trip.trip_id == ItineraryItem.trip_id
+    ).where(
+        Trip.owner_account_id == account_id,
+        Trip.deleted_at.is_(None),
+        ItineraryItem.location_id.is_not(None),
+    )
+    my_locations = set(session.scalars(mine).all())
+    if not my_locations:
+        return {}
+
+    rows = session.execute(
+        select(
+            Trip.owner_account_id,
+            func.count(func.distinct(ItineraryItem.location_id)),
+        )
+        .join(ItineraryItem, ItineraryItem.trip_id == Trip.trip_id)
+        .where(
+            ItineraryItem.location_id.in_(my_locations),
+            Trip.owner_account_id != account_id,
+            Trip.deleted_at.is_(None),
+        )
+        .group_by(Trip.owner_account_id)
+    ).all()
+    return {owner: int(count) for owner, count in rows}
 
 
 def _discoverable(account_id: UUID):
@@ -248,17 +333,35 @@ def _discoverable(account_id: UUID):
 
 
 def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
-    """People to start a chat with.
+    """People worth connecting with.
 
-    Newest accounts first for now - there is no social graph to rank by yet.
+    People heading to the same places come first, ranked by how many
+    destinations you share, then everyone else newest-first so the list is
+    never empty. Existing friends are dropped - there is nothing to do with
+    them here - but pending requests stay, tagged with their direction, so
+    you can see an invite you already sent or received.
     """
     with session_scope() as session:
-        rows = session.scalars(
-            _discoverable(account_id)
-            .order_by(Account.created_at.desc())
-            .limit(limit)
+        friendships = _friendship_map(session, account_id)
+        shared = _shared_destination_counts(session, account_id)
+
+        candidates = session.scalars(
+            _discoverable(account_id).order_by(Account.created_at.desc())
         ).all()
-        return [_person(a) for a in rows]
+
+        people = [
+            a
+            for a in candidates
+            if friendships.get(a.account_id) not in ("friends", "blocked")
+        ]
+        # Most shared destinations first; newest account breaks the tie,
+        # which the query above already ordered by.
+        people.sort(key=lambda a: shared.get(a.account_id, 0), reverse=True)
+
+        return [
+            _person(a, friendships.get(a.account_id), shared.get(a.account_id, 0))
+            for a in people[:limit]
+        ]
 
 
 def search_people(account_id: UUID, query: str, limit: int = 20) -> list[dict]:
@@ -282,7 +385,12 @@ def search_people(account_id: UUID, query: str, limit: int = 20) -> list[dict]:
             .order_by(Account.name)
             .limit(limit)
         ).all()
-        return [_person(a) for a in rows]
+        friendships = _friendship_map(session, account_id)
+        shared = _shared_destination_counts(session, account_id)
+        return [
+            _person(a, friendships.get(a.account_id), shared.get(a.account_id, 0))
+            for a in rows
+        ]
 
 
 def get_by_id(account_id: UUID) -> Optional[Account]:
