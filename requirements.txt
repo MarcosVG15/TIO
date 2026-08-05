@@ -9,6 +9,9 @@ openai>=1.60.0
 
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
+# Required for multipart/form-data - avatar uploads are the only endpoint that
+# takes a file, and FastAPI raises at import time without it.
+python-multipart>=0.0.20
 google-auth[requests]>=2.36.0
 PyJWT>=2.10.0
 argon2-cffi>=23.1.0

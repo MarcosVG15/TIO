@@ -14,6 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN useradd --create-home --uid 1000 tio && chown -R tio:tio /app
+
+# Uploaded avatars live here, on a volume - the image filesystem is discarded
+# on every rebuild. Creating the directory in the image before the volume is
+# mounted matters: Docker seeds a fresh named volume from the image path,
+# ownership included, so it comes up writable by tio rather than root-owned.
+RUN mkdir -p /data/uploads/avatars && chown -R tio:tio /data
+
 USER tio
 
 EXPOSE 8000

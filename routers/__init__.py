@@ -7,6 +7,7 @@ from routers import (
     profile,
     social,
     trips,
+    uploads,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "profile",
     "social",
     "trips",
+    "uploads",
 ]

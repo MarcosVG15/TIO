@@ -25,6 +25,10 @@ services:
       # Overrides whatever DATABASE_URL is in .env: inside the compose
       # network the database is reachable as "db", not as an external IP.
       DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/tio_database
+      AVATAR_DIR: /data/uploads/avatars
+    volumes:
+      # Uploaded profile pictures, kept across rebuilds.
+      - tio_uploads:/data/uploads
     ports:
       - "8000:8000"
     depends_on:
@@ -43,3 +47,4 @@ services:
 
 volumes:
   tio_pgdata:
+  tio_uploads:

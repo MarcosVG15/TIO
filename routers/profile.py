@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
+import avatars
 import bio
 import profiles
 from DATABASE.ORM import Account
@@ -48,6 +49,39 @@ def generate_bio(account: Account = Depends(current_account)) -> dict[str, str]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not generate a bio right now. Try again, or write your own.",
         ) from exc
+
+
+@router.post("/avatar")
+def upload_avatar(
+    file: UploadFile = File(...),
+    account: Account = Depends(current_account),
+) -> dict[str, str]:
+    """Store an uploaded profile picture and return its URL.
+
+    Returns it without saving, the same way /profile/bio/generate does: the
+    user sees the picture in the form and PATCHes /api/profile with
+    {"avatarUrl": "..."} when they press Save. A file landing on the disk is
+    not consent to put it on their profile.
+    """
+    # Read one byte past the limit rather than the whole stream - that is
+    # enough to know it is too big, without holding an arbitrarily large
+    # upload in memory to find out.
+    data = file.file.read(avatars.MAX_BYTES + 1)
+
+    try:
+        url = avatars.store(account.account_id, data, keep=account.avatar_url)
+    except avatars.RejectedImage as exc:
+        # 422, not 400: the request was well-formed, the content was not.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not save that picture right now. Try again.",
+        ) from exc
+
+    return {"avatar_url": url}
 
 
 @router.patch("", response_model=ProfileOut)
