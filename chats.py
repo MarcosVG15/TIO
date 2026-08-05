@@ -16,6 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 
+from friends import friend_ids
 from DATABASE.ORM import (
     Account,
     Conversation,
@@ -39,11 +40,34 @@ class InvalidMembers(Exception):
     """One or more member ids do not resolve to a live account."""
 
 
+class NotFriends(Exception):
+    """You can only put people you are friends with into a chat."""
+
+
 def _as_uuid(value: str) -> Optional[UUID]:
     try:
         return UUID(str(value))
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _check_all_friends(session, account_id: UUID, wanted: set[UUID]) -> None:
+    """Every person being added must already be an accepted friend.
+
+    Checked against the whole set in one query rather than per person, and
+    the message names who is missing so the UI can say something useful.
+    """
+    if not wanted:
+        return
+    mine = friend_ids(session, account_id)
+    strangers = wanted - mine
+    if strangers:
+        names = session.scalars(
+            select(Account.name).where(Account.account_id.in_(strangers))
+        ).all()
+        raise NotFriends(
+            ", ".join(names) if names else ", ".join(str(s) for s in strangers)
+        )
 
 
 def _membership(session, account_id: UUID, chat_id: UUID) -> GroupMember:
@@ -141,6 +165,8 @@ def create_conversation(
             if missing:
                 raise InvalidMembers(", ".join(str(m) for m in missing))
 
+            _check_all_friends(session, account_id, wanted)
+
         conversation = Conversation()
         session.add(conversation)
         session.flush()
@@ -229,6 +255,34 @@ def send_message(account_id: UUID, chat_id: str, body: str) -> dict[str, Any]:
         }
 
 
+def leave_conversation(account_id: UUID, chat_id: str) -> None:
+    """Remove the caller from a chat.
+
+    The messages stay - other members would otherwise see gaps in a thread
+    they were part of. Once the last person leaves, the group is soft-deleted
+    so it stops appearing anywhere.
+    """
+    cid = _as_uuid(chat_id)
+    if cid is None:
+        raise ChatNotFound(chat_id)
+
+    with session_scope() as session:
+        membership = _membership(session, account_id, cid)
+        group_id = membership.group_id
+        session.delete(membership)
+        session.flush()
+
+        remaining = session.scalar(
+            select(func.count(GroupMember.group_member_id)).where(
+                GroupMember.group_id == group_id
+            )
+        )
+        if not remaining:
+            group = session.get(Group, group_id)
+            if group is not None:
+                group.deleted_at = datetime.now(timezone.utc)
+
+
 def add_members(
     account_id: UUID, chat_id: str, member_ids: list[str]
 ) -> dict[str, Any]:
@@ -264,6 +318,9 @@ def add_members(
             missing = to_add - found
             if missing:
                 raise InvalidMembers(", ".join(str(m) for m in missing))
+
+            _check_all_friends(session, account_id, to_add)
+
             for member_id in to_add:
                 session.add(
                     GroupMember(group_id=group.group_id, account_id=member_id)

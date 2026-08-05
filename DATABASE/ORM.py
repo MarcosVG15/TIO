@@ -193,6 +193,13 @@ class GroupRole(str, enum.Enum):
     MEMBER = "member"
 
 
+class FriendshipStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    BLOCKED = "blocked"
+
+
 class EmbeddingStatus(str, enum.Enum):
     """Queue state for a profile awaiting its vector.
 
@@ -273,6 +280,16 @@ class Account(SoftDeleteMixin, Base):
     )
     post_likes: Mapped[list["PostLike"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
+    )
+    friendships_sent: Mapped[list["Friendship"]] = relationship(
+        foreign_keys="Friendship.requester_id",
+        back_populates="requester",
+        cascade="all, delete-orphan",
+    )
+    friendships_received: Mapped[list["Friendship"]] = relationship(
+        foreign_keys="Friendship.addressee_id",
+        back_populates="addressee",
+        cascade="all, delete-orphan",
     )
     # Two relationships over one table, so the FK has to be named explicitly.
     following: Mapped[list["Follow"]] = relationship(
@@ -742,6 +759,54 @@ class PostLike(Base):
     account: Mapped["Account"] = relationship(back_populates="post_likes")
 
 
+class Friendship(Base):
+    """A mutual connection, requested by one side and accepted by the other.
+
+    Distinct from Follow: following is one-way and needs no consent, whereas
+    only accepted friends can be added to a group chat.
+
+    Stored as a single row per pair rather than two, so "are these two
+    friends" is one lookup - but that means every read has to check both
+    (requester, addressee) orderings.
+    """
+
+    __tablename__ = "friendships"
+    __table_args__ = (
+        CheckConstraint(
+            "requester_id <> addressee_id", name="no_self_friendship"
+        ),
+        # "Who wants to be my friend" - the primary key only orders by
+        # requester, so the inbox query needs its own index.
+        Index("ix_friendships_addressee_status", "addressee_id", "status"),
+    )
+
+    requester_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    )
+    addressee_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[FriendshipStatus] = mapped_column(
+        _pg_enum(FriendshipStatus, "friendship_status"),
+        nullable=False,
+        default=FriendshipStatus.PENDING,
+        server_default=FriendshipStatus.PENDING.value,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    responded_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    requester: Mapped["Account"] = relationship(
+        foreign_keys=[requester_id], back_populates="friendships_sent"
+    )
+    addressee: Mapped["Account"] = relationship(
+        foreign_keys=[addressee_id], back_populates="friendships_received"
+    )
+
+
 class Follow(Base):
     """A one-way follow. Mutual following is simply two rows."""
 
@@ -793,6 +858,7 @@ __all__ = [
     "Post",
     "PostLike",
     "Follow",
+    "Friendship",
     "AuthProvider",
     "TripStatus",
     "MessageType",
@@ -802,4 +868,5 @@ __all__ = [
     "GroupRole",
     "PostVisibility",
     "EmbeddingStatus",
+    "FriendshipStatus",
 ]

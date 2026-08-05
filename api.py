@@ -21,6 +21,7 @@ from routers import (
     auth,
     conversations,
     discovery,
+    friends,
     onboarding,
     profile,
     social,
@@ -76,6 +77,7 @@ api.include_router(trips.router)
 api.include_router(conversations.router)
 api.include_router(social.router)
 api.include_router(discovery.router)
+api.include_router(friends.router)
 app.include_router(api)
 
 
