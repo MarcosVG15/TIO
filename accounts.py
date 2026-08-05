@@ -15,6 +15,7 @@ from DATABASE.ORM import (
     Friendship,
     FriendshipStatus,
     ItineraryItem,
+    Location,
     Trip,
     session_scope,
 )
@@ -229,20 +230,29 @@ def authenticate(email: str, password: str) -> Account:
 def _person(
     account: Account,
     friendship: Optional[str] = None,
-    shared_destinations: int = 0,
+    shared: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """The public view of someone else - never their email address.
 
     friendshipStatus lets the UI pick between "Add friend", "Requested",
     "Accept" and "Friends" without a second round trip per person.
+
+    sharedInterests is always a list, never null: the people card calls
+    .join() on it unconditionally and would crash on undefined.
     """
+    shared = shared or []
     return {
         "id": str(account.account_id),
         "name": account.name,
         "handle": (account.email or "").split("@")[0],
         "avatarUrl": (account.account_metadata or {}).get("picture"),
         "friendshipStatus": friendship,
-        "sharedDestinations": shared_destinations,
+        #: Names of destinations you both have planned.
+        "sharedInterests": shared,
+        "sharedDestinations": len(shared),
+        #: No geo data on accounts, so distance is genuinely unknown rather
+        #: than zero. The card renders it as "— km away".
+        "distanceKm": None,
     }
 
 
@@ -278,8 +288,8 @@ def _friendship_map(session, account_id: UUID) -> dict[UUID, str]:
     return result
 
 
-def _shared_destination_counts(session, account_id: UUID) -> dict[UUID, int]:
-    """How many of my destinations each other traveller also has planned.
+def _shared_destinations(session, account_id: UUID) -> dict[UUID, list[str]]:
+    """Which of my destinations each other traveller also has planned.
 
     A trip's destinations are its itinerary items' locations - Trip itself
     only records an origin, so there is nowhere else to read this from.
@@ -298,19 +308,21 @@ def _shared_destination_counts(session, account_id: UUID) -> dict[UUID, int]:
         return {}
 
     rows = session.execute(
-        select(
-            Trip.owner_account_id,
-            func.count(func.distinct(ItineraryItem.location_id)),
-        )
+        select(Trip.owner_account_id, Location.name)
         .join(ItineraryItem, ItineraryItem.trip_id == Trip.trip_id)
+        .join(Location, Location.location_id == ItineraryItem.location_id)
         .where(
             ItineraryItem.location_id.in_(my_locations),
             Trip.owner_account_id != account_id,
             Trip.deleted_at.is_(None),
         )
-        .group_by(Trip.owner_account_id)
+        .distinct()
     ).all()
-    return {owner: int(count) for owner, count in rows}
+
+    out: dict[UUID, list[str]] = {}
+    for owner, name in rows:
+        out.setdefault(owner, []).append(name)
+    return out
 
 
 def _discoverable(account_id: UUID):
@@ -343,7 +355,7 @@ def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
     """
     with session_scope() as session:
         friendships = _friendship_map(session, account_id)
-        shared = _shared_destination_counts(session, account_id)
+        shared = _shared_destinations(session, account_id)
 
         candidates = session.scalars(
             _discoverable(account_id).order_by(Account.created_at.desc())
@@ -356,10 +368,10 @@ def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
         ]
         # Most shared destinations first; newest account breaks the tie,
         # which the query above already ordered by.
-        people.sort(key=lambda a: shared.get(a.account_id, 0), reverse=True)
+        people.sort(key=lambda a: len(shared.get(a.account_id, [])), reverse=True)
 
         return [
-            _person(a, friendships.get(a.account_id), shared.get(a.account_id, 0))
+            _person(a, friendships.get(a.account_id), shared.get(a.account_id))
             for a in people[:limit]
         ]
 
@@ -386,9 +398,9 @@ def search_people(account_id: UUID, query: str, limit: int = 20) -> list[dict]:
             .limit(limit)
         ).all()
         friendships = _friendship_map(session, account_id)
-        shared = _shared_destination_counts(session, account_id)
+        shared = _shared_destinations(session, account_id)
         return [
-            _person(a, friendships.get(a.account_id), shared.get(a.account_id, 0))
+            _person(a, friendships.get(a.account_id), shared.get(a.account_id))
             for a in rows
         ]
 
