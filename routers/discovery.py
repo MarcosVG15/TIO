@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+import accounts
 from DATABASE.ORM import Account
 from deps import current_account, not_implemented
 
@@ -26,5 +27,13 @@ def recommended_destinations(account: Account = Depends(current_account)):
 
 @router.get("/search")
 def search(q: str = "", account: Account = Depends(current_account)):
-    """Free-text search over locations."""
-    raise not_implemented("search")
+    """Search. People work today; locations need the Location table populated.
+
+    Returns {"users": [...], "locations": []} - the chat screen reads
+    `.users`, and the empty locations key keeps the shape stable for whoever
+    wires up destination search later.
+    """
+    return {
+        "users": accounts.search_people(account.account_id, q),
+        "locations": [],
+    }

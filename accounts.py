@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 import passwords
 from auth import GoogleClaims
@@ -216,6 +216,73 @@ def authenticate(email: str, password: str) -> Account:
         # this lookup in the first place - reaching this point means the
         # account is live.
         return account
+
+
+def _person(account: Account) -> dict[str, Optional[str]]:
+    """The public view of someone else - never their email address."""
+    return {
+        "id": str(account.account_id),
+        "name": account.name,
+        "handle": (account.email or "").split("@")[0],
+        "avatarUrl": (account.account_metadata or {}).get("picture"),
+    }
+
+
+def _discoverable(account_id: UUID):
+    """People who can be found: live, not you, and not opted out.
+
+    public_profile defaults to true when the key is absent, so accounts that
+    predate the preference are still discoverable.
+    """
+    return (
+        select(Account)
+        .where(
+            Account.deleted_at.is_(None),
+            Account.account_id != account_id,
+            or_(
+                Account.account_metadata["public_profile"].astext != "false",
+                Account.account_metadata["public_profile"].is_(None),
+            ),
+        )
+    )
+
+
+def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
+    """People to start a chat with.
+
+    Newest accounts first for now - there is no social graph to rank by yet.
+    """
+    with session_scope() as session:
+        rows = session.scalars(
+            _discoverable(account_id)
+            .order_by(Account.created_at.desc())
+            .limit(limit)
+        ).all()
+        return [_person(a) for a in rows]
+
+
+def search_people(account_id: UUID, query: str, limit: int = 20) -> list[dict]:
+    """Find people by name or email. Matching on email is intentional - it is
+    how you invite someone you know - but the address is never returned.
+    """
+    term = (query or "").strip()
+    if len(term) < 2:
+        return []
+
+    pattern = f"%{term.lower()}%"
+    with session_scope() as session:
+        rows = session.scalars(
+            _discoverable(account_id)
+            .where(
+                or_(
+                    func.lower(Account.name).like(pattern),
+                    func.lower(Account.email).like(pattern),
+                )
+            )
+            .order_by(Account.name)
+            .limit(limit)
+        ).all()
+        return [_person(a) for a in rows]
 
 
 def get_by_id(account_id: UUID) -> Optional[Account]:

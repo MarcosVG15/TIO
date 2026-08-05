@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 
+import accounts
 from DATABASE.ORM import Account
 from deps import current_account, not_implemented
 
@@ -39,5 +40,9 @@ def suggested_users(
     lng: Optional[float] = None,
     account: Account = Depends(current_account),
 ):
-    """People to follow, optionally near a coordinate."""
-    raise not_implemented("suggested people")
+    """People you could chat with or follow.
+
+    Wrapped in {"users": [...]} - that is the shape the chat screen reads.
+    lat/lng are accepted but not used yet; there is no location index.
+    """
+    return {"users": accounts.suggested_people(account.account_id)}
