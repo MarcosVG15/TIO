@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 import passwords
 from auth import GoogleClaims
@@ -66,8 +66,14 @@ def get_or_create_from_google(claims: GoogleClaims) -> Account:
     different person entirely in Google Workspace.
     """
     with session_scope() as session:
+        # Live accounts only. A deactivated row must not be returned - it
+        # would yield a session token that every later request rejects,
+        # because current_account resolves live accounts only.
         account = session.scalar(
-            select(Account).where(Account.user_id == claims.sub)
+            select(Account).where(
+                Account.user_id == claims.sub,
+                Account.deleted_at.is_(None),
+            )
         )
 
         if account is not None:
@@ -75,18 +81,38 @@ def get_or_create_from_google(claims: GoogleClaims) -> Account:
             account.name = _display_name(claims)
             account.surname = claims.family_name
             account.email_verified = claims.email_verified
-            # Matched on `sub`, which deactivation also releases, so this
-            # branch only ever sees live accounts.
             return account
 
+        # A *live* account on this address is a real conflict.
         collision = session.scalar(
-            select(Account).where(Account.email == claims.email)
+            select(Account).where(
+                Account.email == claims.email,
+                Account.deleted_at.is_(None),
+            )
         )
         if collision is not None:
             raise AccountConflict(
                 f"{claims.email} is already registered via "
                 f"{collision.auth_provider.value}"
             )
+
+        # Deactivated rows may still be holding this address or subject -
+        # either from before identifiers were released on deactivation, or
+        # from a row deactivated by another route. Both columns are UNIQUE,
+        # so the insert below would fail on them. Free them first.
+        stale = session.scalars(
+            select(Account).where(
+                Account.deleted_at.is_not(None),
+                or_(
+                    Account.email == claims.email,
+                    Account.user_id == claims.sub,
+                ),
+            )
+        ).all()
+        for row in stale:
+            release_identifiers(row)
+        if stale:
+            session.flush()
 
         account = Account(
             user_id=claims.sub,
@@ -146,7 +172,14 @@ def authenticate(email: str, password: str) -> Account:
     email = email.strip().lower()
 
     with session_scope() as session:
-        account = session.scalar(select(Account).where(Account.email == email))
+        # Live accounts only. Authenticating a deactivated row would hand back
+        # a token that current_account then rejects on every request.
+        account = session.scalar(
+            select(Account).where(
+                Account.email == email,
+                Account.deleted_at.is_(None),
+            )
+        )
 
         if account is None:
             # Still spend the CPU a real verification would, so response time
