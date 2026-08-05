@@ -442,6 +442,11 @@ class GroupMember(Base):
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    #: Watermark for unread counts. NULL means they have never opened the
+    #: chat, so everything in it is unread.
+    last_read_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     group: Mapped["Group"] = relationship(back_populates="members")
     account: Mapped["Account"] = relationship(back_populates="group_memberships")

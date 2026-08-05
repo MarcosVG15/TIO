@@ -10,7 +10,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 import passwords
 from DATABASE.ORM import ActivityType, BookingStatus, TripStatus
@@ -148,6 +148,63 @@ class ProfileUpdate(BaseModel):
     #: false deactivates. Reactivating happens by signing in again.
     is_active: Optional[bool] = None
     deactivation_reason: Optional[str] = Field(default=None, max_length=500)
+
+
+# ---------------------------------------------------------------------------
+# Chat
+#
+# These use camelCase on the wire, unlike the snake_case auth and profile
+# endpoints - that is what the chat screen reads. Aliases keep the Python
+# side conventional; FastAPI serialises by alias.
+# ---------------------------------------------------------------------------
+
+
+class MemberOut(BaseModel):
+    id: str
+    name: str
+
+
+class MessageOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    body: str
+    author_name: str = Field(serialization_alias="authorName")
+    #: True when the caller sent it - drives which side of the thread it
+    #: renders on, so it is per-viewer, not a property of the message.
+    mine: bool
+    created_at: datetime = Field(serialization_alias="createdAt")
+
+
+class ConversationOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    is_group: bool = Field(serialization_alias="isGroup")
+    members: list[MemberOut] = Field(default_factory=list)
+    last_message: Optional[str] = Field(default=None, serialization_alias="lastMessage")
+    unread_count: int = Field(default=0, serialization_alias="unreadCount")
+
+
+class ConversationCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = Field(default=None, max_length=150)
+    is_group: bool = Field(default=False, validation_alias="isGroup")
+    member_ids: list[str] = Field(
+        default_factory=list, validation_alias="memberIds"
+    )
+
+
+class MessageCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class MembersAdd(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    member_ids: list[str] = Field(validation_alias="memberIds")
 
 
 # ---------------------------------------------------------------------------

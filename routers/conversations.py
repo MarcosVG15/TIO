@@ -1,48 +1,106 @@
-"""Group chat.
+"""Group chat endpoints.
 
-Backed by the Conversation / Message / GroupMember tables, which exist -
-these are unimplemented rather than undesigned.
-
-Request bodies are deliberately not declared. A stub that validates would
-return 422 on an unexpected shape, and the frontend renders 422 as a field
-error instead of the "coming soon" message it shows for 501.
+Backed by the Conversation / Message / Group / GroupMember tables. Responses
+are camelCase - see the Chat section of schemas.py.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
+import chats
 from DATABASE.ORM import Account
-from deps import current_account, not_implemented
+from deps import current_account
+from schemas import ConversationCreate, ConversationOut, MembersAdd, MessageCreate, MessageOut
 
 router = APIRouter(tags=["conversations"])
 
 
-@router.get("/conversations")
+def _not_found() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND, detail="conversation not found"
+    )
+
+
+@router.get("/conversations", response_model=list[ConversationOut])
 def list_conversations(account: Account = Depends(current_account)):
-    """Every conversation the caller is a member of."""
-    raise not_implemented("conversations")
+    """Every conversation the caller belongs to, newest first.
+
+    Empty list when they have none - a normal state, not an error.
+    """
+    return chats.list_conversations(account.account_id)
 
 
-@router.post("/conversations")
-def create_conversation(account: Account = Depends(current_account)):
-    """Start a conversation."""
-    raise not_implemented("creating a conversation")
+@router.post(
+    "/conversations",
+    response_model=ConversationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_conversation(
+    payload: ConversationCreate,
+    account: Account = Depends(current_account),
+):
+    """Start a conversation. The caller is added as owner automatically, so
+    memberIds only needs the other people.
+    """
+    try:
+        return chats.create_conversation(
+            account_id=account.account_id,
+            name=payload.name,
+            member_ids=payload.member_ids,
+            is_group=payload.is_group,
+        )
+    except chats.InvalidMembers as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unknown member: {exc}",
+        ) from exc
 
 
-@router.get("/conversations/{chat_id}/messages")
+@router.get(
+    "/conversations/{chat_id}/messages", response_model=list[MessageOut]
+)
 def list_messages(chat_id: str, account: Account = Depends(current_account)):
-    """Messages in a conversation, oldest first."""
-    raise not_implemented("messages")
+    """Messages oldest-first. Fetching also marks the chat as read, which is
+    what clears the unread badge.
+    """
+    try:
+        return chats.list_messages(account.account_id, chat_id)
+    except chats.ChatNotFound as exc:
+        raise _not_found() from exc
 
 
-@router.post("/conversations/{chat_id}/messages")
-def send_message(chat_id: str, account: Account = Depends(current_account)):
-    """Send a message. Frontend sends {"body": "<text>"}."""
-    raise not_implemented("sending messages")
+@router.post(
+    "/conversations/{chat_id}/messages",
+    response_model=MessageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def send_message(
+    chat_id: str,
+    payload: MessageCreate,
+    account: Account = Depends(current_account),
+):
+    try:
+        return chats.send_message(account.account_id, chat_id, payload.body)
+    except chats.ChatNotFound as exc:
+        raise _not_found() from exc
 
 
-@router.post("/conversations/{chat_id}/members")
-def add_members(chat_id: str, account: Account = Depends(current_account)):
-    """Add people to a conversation. Frontend sends {"memberIds": [...]}."""
-    raise not_implemented("adding members")
+@router.post("/conversations/{chat_id}/members", response_model=ConversationOut)
+def add_members(
+    chat_id: str,
+    payload: MembersAdd,
+    account: Account = Depends(current_account),
+):
+    """Add people. Already-present members are ignored rather than erroring."""
+    try:
+        return chats.add_members(
+            account.account_id, chat_id, payload.member_ids
+        )
+    except chats.ChatNotFound as exc:
+        raise _not_found() from exc
+    except chats.InvalidMembers as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unknown member: {exc}",
+        ) from exc
