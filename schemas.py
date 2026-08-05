@@ -187,6 +187,19 @@ class ConversationOut(BaseModel):
     unread_count: int = Field(default=0, serialization_alias="unreadCount")
 
 
+class ConversationListOut(BaseModel):
+    """Wrapped, not a bare array - the chat screen reads `data.conversations`
+    and would throw on a plain list."""
+
+    conversations: list[ConversationOut] = Field(default_factory=list)
+
+
+class MessageListOut(BaseModel):
+    """Wrapped for the same reason: the screen reads `data.messages`."""
+
+    messages: list[MessageOut] = Field(default_factory=list)
+
+
 class ConversationCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

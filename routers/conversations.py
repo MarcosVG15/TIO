@@ -11,7 +11,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 import chats
 from DATABASE.ORM import Account
 from deps import current_account
-from schemas import ConversationCreate, ConversationOut, MembersAdd, MessageCreate, MessageOut
+from schemas import (
+    ConversationCreate,
+    ConversationListOut,
+    ConversationOut,
+    MembersAdd,
+    MessageCreate,
+    MessageListOut,
+    MessageOut,
+)
 
 router = APIRouter(tags=["conversations"])
 
@@ -22,13 +30,13 @@ def _not_found() -> HTTPException:
     )
 
 
-@router.get("/conversations", response_model=list[ConversationOut])
+@router.get("/conversations", response_model=ConversationListOut)
 def list_conversations(account: Account = Depends(current_account)):
     """Every conversation the caller belongs to, newest first.
 
     Empty list when they have none - a normal state, not an error.
     """
-    return chats.list_conversations(account.account_id)
+    return {"conversations": chats.list_conversations(account.account_id)}
 
 
 @router.post(
@@ -57,15 +65,13 @@ def create_conversation(
         ) from exc
 
 
-@router.get(
-    "/conversations/{chat_id}/messages", response_model=list[MessageOut]
-)
+@router.get("/conversations/{chat_id}/messages", response_model=MessageListOut)
 def list_messages(chat_id: str, account: Account = Depends(current_account)):
     """Messages oldest-first. Fetching also marks the chat as read, which is
     what clears the unread badge.
     """
     try:
-        return chats.list_messages(account.account_id, chat_id)
+        return {"messages": chats.list_messages(account.account_id, chat_id)}
     except chats.ChatNotFound as exc:
         raise _not_found() from exc
 
