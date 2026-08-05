@@ -95,7 +95,7 @@ class ExtractedProfile(BaseModel):
 
 
 class UserExtractor:
-    def __init__(self, questionnaire: dict, conversation: list[dict]):
+    def __init__(self, questionnaire: list[dict], conversation: list[dict]):
         self.questionnaire = questionnaire
         self.conversation = conversation
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

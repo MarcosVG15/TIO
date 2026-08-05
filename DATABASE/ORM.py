@@ -193,6 +193,18 @@ class GroupRole(str, enum.Enum):
     MEMBER = "member"
 
 
+class EmbeddingStatus(str, enum.Enum):
+    """Queue state for a profile awaiting its vector.
+
+    The Personality row is the job - there is no separate queue table.
+    """
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    DONE = "done"
+    FAILED = "failed"
+
+
 class PostVisibility(str, enum.Enum):
     PUBLIC = "public"
     FOLLOWERS = "followers"
@@ -300,8 +312,37 @@ class Personality(Base):
     preferred_language: Mapped[list[str]] = mapped_column(
         ARRAY(String(16)), nullable=False, default=list, server_default="{}"
     )
+    #: The prose that gets embedded. Persisted verbatim so a later model
+    #: change can re-embed without re-running the LLM and getting new text.
+    profile_paragraph: Mapped[Optional[str]] = mapped_column(Text)
+
     personality_vector: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIM), nullable=True
+    )
+
+    # Queue state. The row is the job - there is no separate queue table.
+    embedding_status: Mapped[EmbeddingStatus] = mapped_column(
+        _pg_enum(EmbeddingStatus, "embedding_status"),
+        nullable=False,
+        default=EmbeddingStatus.PENDING,
+        server_default=EmbeddingStatus.PENDING.value,
+        index=True,
+    )
+    embedding_attempts: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    embedding_error: Mapped[Optional[str]] = mapped_column(Text)
+    #: Which model produced the vector, so a migration can find stale rows.
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(120))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     account: Mapped["Account"] = relationship(back_populates="personality")
@@ -755,4 +796,5 @@ __all__ = [
     "TicketRequirement",
     "GroupRole",
     "PostVisibility",
+    "EmbeddingStatus",
 ]

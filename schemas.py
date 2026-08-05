@@ -6,7 +6,7 @@ at /openapi.json, which can be compiled straight into TypeScript types.
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -61,7 +61,17 @@ class SessionOut(BaseModel):
 
 
 class OnboardingRequest(BaseModel):
-    questionnaire: dict[str, Any] = Field(default_factory=dict)
+    """What the questionnaire screen posts.
+
+    questionnaire is a list of {"question": ..., "answer": ...} - an array,
+    not an object. conversation is the same content rendered as a transcript
+    of {"role", "content"} turns.
+
+    Both are typed loosely on purpose: the frontend is generated, and a strict
+    shape here turns a small wording change into a 422 the user sees.
+    """
+
+    questionnaire: list[dict[str, Any]] = Field(default_factory=list)
     conversation: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -69,6 +79,9 @@ class OnboardingOut(BaseModel):
     account_id: str
     personality_id: str
     vector_pending: bool
+    #: Read by the questionnaire screen when it finishes.
+    onboarding_completed: bool = True
+    profile_summary: Optional[str] = None
 
 
 class OnboardingStatusOut(BaseModel):
@@ -88,20 +101,53 @@ class OnboardingStatusOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class Preferences(BaseModel):
+    push_notifications: bool = True
+    public_profile: bool = True
+
+
 class ProfileOut(BaseModel):
-    personality_id: str
-    dietary_restriction: dict[str, Any]
-    accessibility_needs: dict[str, Any]
-    preferred_language: list[str]
-    profile_paragraph: Optional[str] = None
+    """Everything the profile screen renders."""
+
+    account: AccountOut
+    onboarding_completed: bool
+    preferences: Preferences
+    #: The raw question/answer pairs, echoed back so they can be reviewed.
+    questionnaire: list[dict[str, Any]] = Field(default_factory=list)
+    profile_summary: Optional[str] = None
+    dietary_restriction: dict[str, Any] = Field(default_factory=dict)
+    accessibility_needs: dict[str, Any] = Field(default_factory=dict)
+    preferred_language: list[str] = Field(default_factory=list)
+    embedding_status: Optional[str] = None
+    ready: bool = False
+    #: Set once the account is deactivated.
+    deactivated_at: Optional[datetime] = None
 
 
 class ProfileUpdate(BaseModel):
-    """Hard constraints only. The paragraph is derived, never hand-edited."""
+    """One PATCH endpoint serves three different frontend actions.
 
-    dietary_restriction: Optional[dict[str, Any]] = None
-    accessibility_needs: Optional[dict[str, Any]] = None
-    preferred_language: Optional[list[str]] = None
+    Every field is optional and unset fields are left alone, so the caller
+    only sends what it is changing:
+      - editing details      {"name": ..., "surname": ...}
+      - resetting onboarding {"questionnaire": null, "onboarding_completed": false}
+      - deactivating         {"is_active": false, "deactivation_reason": ...}
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    surname: Optional[str] = Field(default=None, max_length=120)
+
+    push_notifications: Optional[bool] = None
+    public_profile: Optional[bool] = None
+    preferences: Optional[Preferences] = None
+
+    #: Explicit null means "wipe my answers and send me back to onboarding".
+    questionnaire: Optional[list[dict[str, Any]]] = None
+    onboarding_completed: Optional[bool] = None
+
+    #: false deactivates. Reactivating happens by signing in again.
+    is_active: Optional[bool] = None
+    deactivation_reason: Optional[str] = Field(default=None, max_length=500)
 
 
 # ---------------------------------------------------------------------------
