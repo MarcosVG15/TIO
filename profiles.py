@@ -15,6 +15,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from accounts import release_identifiers
 from DATABASE.ORM import Account, Personality, session_scope
 
 PREFERENCE_KEYS = ("push_notifications", "public_profile")
@@ -130,14 +131,22 @@ def update_profile(account_id: UUID, changes: dict[str, Any]) -> dict[str, Any]:
             personality.profile_paragraph = None
             personality.personality_vector = None
 
-        if changes.get("is_active") is False:
+        deactivating = changes.get("is_active") is False
+        original_email = account.email
+
+        if deactivating:
             account.deleted_at = datetime.now(timezone.utc)
             if changes.get("deactivation_reason"):
                 meta = dict(account.account_metadata or {})
                 meta["deactivation_reason"] = changes["deactivation_reason"]
                 account.account_metadata = meta
-        elif changes.get("is_active") is True:
-            account.deleted_at = None
+            # Email and provider subject are UNIQUE. Without releasing them
+            # the person could never sign up again with their own address.
+            release_identifiers(account)
 
         session.flush()
-        return _payload(account, personality)
+        payload = _payload(account, personality)
+        if deactivating:
+            # Report the address they actually used, not the placeholder.
+            payload["account"]["email"] = original_email
+        return payload

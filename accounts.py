@@ -29,6 +29,36 @@ def _display_name(claims: GoogleClaims) -> str:
     return claims.given_name or claims.name or claims.email.split("@")[0]
 
 
+def release_identifiers(account: Account) -> None:
+    """Free a deactivated account's email and provider subject for reuse.
+
+    Both columns are UNIQUE, so leaving the real values in place would block
+    the person from ever signing up again with their own address. Rewriting
+    them to per-account placeholders keeps the row - trips, History and their
+    vec_snapshots all survive - while making it unreachable.
+
+    The originals are kept in metadata for support and audit.
+
+    This is what makes deactivation final: a later sign-up creates a genuinely
+    new account rather than reopening this one. Reactivating by signing in is
+    deliberately not possible, because the alternative - letting anyone who
+    knows a deactivated address re-register and inherit that account's data -
+    is an account-takeover hole.
+    """
+    meta = dict(account.account_metadata or {})
+    meta.setdefault("deactivated_email", account.email)
+    if account.user_id:
+        meta.setdefault("deactivated_user_id", account.user_id)
+    account.account_metadata = meta
+
+    marker = str(account.account_id)
+    account.email = f"deleted+{marker}@deleted.invalid"
+    if account.user_id:
+        # Cannot be NULL for provider accounts - the check constraint
+        # requires it - so replace rather than clear.
+        account.user_id = f"deleted:{marker}"
+
+
 def get_or_create_from_google(claims: GoogleClaims) -> Account:
     """Match on the Google subject id, never on email.
 
@@ -45,8 +75,8 @@ def get_or_create_from_google(claims: GoogleClaims) -> Account:
             account.name = _display_name(claims)
             account.surname = claims.family_name
             account.email_verified = claims.email_verified
-            # A returning user whose account was soft-deleted is revived.
-            account.deleted_at = None
+            # Matched on `sub`, which deactivation also releases, so this
+            # branch only ever sees live accounts.
             return account
 
         collision = session.scalar(
@@ -86,10 +116,16 @@ def create_with_password(
     with session_scope() as session:
         existing = session.scalar(select(Account).where(Account.email == email))
         if existing is not None:
-            raise AccountConflict(
-                f"{email} is already registered via "
-                f"{existing.auth_provider.value}"
-            )
+            if existing.deleted_at is None:
+                raise AccountConflict(
+                    f"{email} is already registered via "
+                    f"{existing.auth_provider.value}"
+                )
+            # Deactivated. Free the address and let the sign-up proceed as a
+            # brand new account - the old row keeps its data but is detached
+            # from this person's identity.
+            release_identifiers(existing)
+            session.flush()
 
         account = Account(
             user_id=None,
@@ -142,8 +178,10 @@ def authenticate(email: str, password: str) -> Account:
         if passwords.needs_rehash(account.password_hash):
             account.password_hash = passwords.hash_password(password)
 
-        # Same policy as Google sign-in: signing back in revives the account.
-        account.deleted_at = None
+        # No revive here. Deactivation releases the email (see
+        # release_identifiers), so a deactivated account can never be found by
+        # this lookup in the first place - reaching this point means the
+        # account is live.
         return account
 
 
