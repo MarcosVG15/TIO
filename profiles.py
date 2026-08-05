@@ -37,6 +37,9 @@ def _account_out(account: Account) -> dict[str, Any]:
         "name": account.name,
         "surname": account.surname,
         "auth_provider": account.auth_provider.value,
+        "bio": account.bio,
+        "avatar_url": account.avatar_url
+        or (account.account_metadata or {}).get("picture"),
     }
 
 
@@ -107,6 +110,12 @@ def update_profile(account_id: UUID, changes: dict[str, Any]) -> dict[str, Any]:
         if "surname" in changes:
             surname = changes["surname"]
             account.surname = surname.strip() if surname else None
+        if "bio" in changes:
+            bio = changes["bio"]
+            account.bio = bio.strip() if bio else None
+        if "avatar_url" in changes:
+            avatar = changes["avatar_url"]
+            account.avatar_url = avatar.strip() if avatar else None
 
         # Accept both the flat and nested forms the frontend uses.
         prefs = dict(changes.get("preferences") or {})

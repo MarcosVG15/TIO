@@ -256,6 +256,12 @@ class Account(SoftDeleteMixin, Base):
     email_verified: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    #: Short self-introduction shown on people cards. Written by the user or
+    #: generated from their profile - either way it is theirs to edit.
+    bio: Mapped[Optional[str]] = mapped_column(String(300))
+    #: Explicit avatar. Falls back to the provider picture in metadata when
+    #: unset, so a Google user gets one without doing anything.
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(2048))
     # Attribute renamed: `metadata` is reserved on a declarative class.
     account_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default="{}"
@@ -320,6 +326,23 @@ class Personality(Base):
     )
     preferred_language: Mapped[list[str]] = mapped_column(
         ARRAY(String(16)), nullable=False, default=list, server_default="{}"
+    )
+
+    # Structured traits worth filtering on. Everything softer than this stays
+    # in profile_paragraph, where the embedding picks it up - a column per
+    # nuance would be a migration every time the questionnaire changes.
+    home_city: Mapped[Optional[str]] = mapped_column(String(120))
+    home_country: Mapped[Optional[str]] = mapped_column(String(120))
+    hobbies: Mapped[list[str]] = mapped_column(
+        ARRAY(String(60)), nullable=False, default=list, server_default="{}"
+    )
+    #: budget / pace stored as plain text rather than Postgres enums: the
+    #: Pydantic extraction schema already constrains the values, and an enum
+    #: type here would mean a migration to add one option.
+    budget_tier: Mapped[Optional[str]] = mapped_column(String(20))
+    travel_pace: Mapped[Optional[str]] = mapped_column(String(20))
+    travel_styles: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, default=list, server_default="{}"
     )
     #: The prose that gets embedded. Persisted verbatim so a later model
     #: change can re-embed without re-running the LLM and getting new text.

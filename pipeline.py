@@ -134,6 +134,21 @@ class Pipeline:
             personality.preferred_language = list(profile.preferred_languages)
             personality.profile_paragraph = profile.profile_paragraph
 
+            personality.home_city = profile.home_city
+            personality.home_country = profile.home_country
+            personality.hobbies = list(profile.hobbies)
+            personality.budget_tier = (
+                profile.budget_tier.value if profile.budget_tier else None
+            )
+            personality.travel_pace = (
+                profile.travel_pace.value if profile.travel_pace else None
+            )
+            personality.travel_styles = [s.value for s in profile.travel_styles]
+
+            # Only seed the bio - never overwrite one the user has edited.
+            if profile.short_bio and not account.bio:
+                account.bio = profile.short_bio
+
         return personality
 
     def _enqueue_embedding(self, personality: Personality) -> None:

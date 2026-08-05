@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+import bio
 import profiles
 from DATABASE.ORM import Account
 from deps import current_account
@@ -24,6 +25,28 @@ def get_profile(account: Account = Depends(current_account)) -> ProfileOut:
     except profiles.AccountMissing as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="account not found"
+        ) from exc
+
+
+@router.post("/bio/generate")
+def generate_bio(account: Account = Depends(current_account)) -> dict[str, str]:
+    """Suggest a bio from the person's profile.
+
+    Returns it without saving. The user reviews or edits it, then PATCHes
+    /api/profile with {"bio": "..."} - a bio they never agreed to should not
+    end up on their card.
+    """
+    try:
+        return {"bio": bio.generate(account.account_id)}
+    except bio.NoProfile as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Complete onboarding first - there is nothing to write from yet.",
+        ) from exc
+    except Exception as exc:  # OpenAI down, rate limited, bad key
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not generate a bio right now. Try again, or write your own.",
         ) from exc
 
 

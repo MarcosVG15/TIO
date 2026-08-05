@@ -44,7 +44,34 @@ Exclude: any name or identifying detail; dietary restrictions,
 accessibility needs, and languages; hedging like "seems to" or
 "might enjoy"; anything not grounded in the source material.
 
-Write plain declarative prose. No lists, no headings, no markdown."""
+Write plain declarative prose. No lists, no headings, no markdown.
+
+STRUCTURED TRAITS
+
+home_city / home_country: where they are based, not somewhere they have
+visited. Leave null unless they say where they live or are from.
+
+hobbies: interests outside travel, lowercase, one or two words each
+("photography", "rock climbing"). Not travel preferences - those belong in
+travel_styles. Maximum twelve.
+
+preferred_languages: ISO-ish short names of languages they speak
+("en", "fr", "es"). Only what they state.
+
+travel_pace and travel_styles: pick only from the allowed values, and only
+where the source supports it. An empty list is better than a guess.
+
+SHORT BIO
+
+One or two sentences, first person, under 300 characters, written to be read
+by another traveller rather than by a machine. Concrete and specific - what
+they actually like, where they are from - never generic filler like "I love
+to travel and explore new places". No name, no age, no contact details.
+
+Example: "Lisbon-based, chasing good coffee and older architecture. Happiest
+walking a city with no plan until something interesting turns up."
+
+Leave it null if the sources are too thin to write something honest."""
 
 PROMPT = """Extract a travel profile from the two sources below.
 
@@ -85,12 +112,47 @@ class BudgetTier(str, Enum):
     LUXURY = "luxury"
 
 
+class TravelPace(str, Enum):
+    PACKED = "packed"
+    BALANCED = "balanced"
+    SLOW = "slow"
+
+
+class TravelStyle(str, Enum):
+    CITY_BREAK = "city_break"
+    BEACH = "beach"
+    NATURE = "nature"
+    ROAD_TRIP = "road_trip"
+    CULTURE = "culture"
+    FOOD = "food"
+    NIGHTLIFE = "nightlife"
+    ADVENTURE = "adventure"
+    WELLNESS = "wellness"
+    FAMILY = "family"
+    BUSINESS = "business"
+
+
 class ExtractedProfile(BaseModel):
+    # --- hard constraints: these become SQL filters ---
     dietary_restrictions: list[DietaryRestriction] = Field(default_factory=list)
     accessibility_needs: list[AccessibilityNeed] = Field(default_factory=list)
     preferred_languages: list[str] = Field(default_factory=list)
     budget_tier: Optional[BudgetTier] = None
+
+    # --- structured traits: filterable, and they sharpen the embedding ---
+    home_city: Optional[str] = Field(default=None, max_length=120)
+    home_country: Optional[str] = Field(default=None, max_length=120)
+    hobbies: list[str] = Field(default_factory=list, max_length=12)
+    travel_pace: Optional[TravelPace] = None
+    travel_styles: list[TravelStyle] = Field(default_factory=list)
+
+    # --- the prose that actually gets embedded ---
     profile_paragraph: str = Field(min_length=1, max_length=1200)
+    #: One or two sentences, first person, for the traveller card. Distinct
+    #: from profile_paragraph, which is third person and written for a
+    #: similarity model rather than for another human to read.
+    short_bio: Optional[str] = Field(default=None, max_length=300)
+
     confidence: float = Field(ge=0.0, le=1.0)
 
 

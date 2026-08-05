@@ -46,6 +46,8 @@ class AccountOut(BaseModel):
     name: str
     surname: Optional[str] = None
     auth_provider: str
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 class SessionOut(BaseModel):
@@ -136,6 +138,11 @@ class ProfileUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     surname: Optional[str] = Field(default=None, max_length=120)
+    #: Explicit null clears it.
+    bio: Optional[str] = Field(default=None, max_length=300)
+    avatar_url: Optional[str] = Field(
+        default=None, max_length=2048, validation_alias="avatarUrl"
+    )
 
     push_notifications: Optional[bool] = None
     public_profile: Optional[bool] = None

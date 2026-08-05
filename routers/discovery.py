@@ -26,7 +26,11 @@ def recommended_destinations(account: Account = Depends(current_account)):
 
 
 @router.get("/search")
-def search(q: str = "", account: Account = Depends(current_account)):
+def search(
+    q: str = "",
+    friendsOnly: bool = False,
+    account: Account = Depends(current_account),
+):
     """Search. People work today; locations need the Location table populated.
 
     Returns {"users": [...], "locations": []} - the chat screen reads
@@ -34,6 +38,8 @@ def search(q: str = "", account: Account = Depends(current_account)):
     wires up destination search later.
     """
     return {
-        "users": accounts.search_people(account.account_id, q),
+        "users": accounts.search_people(
+            account.account_id, q, friends_only=friendsOnly
+        ),
         "locations": [],
     }

@@ -245,7 +245,11 @@ def _person(
         "id": str(account.account_id),
         "name": account.name,
         "handle": (account.email or "").split("@")[0],
-        "avatarUrl": (account.account_metadata or {}).get("picture"),
+        # Explicit avatar wins; otherwise fall back to the provider picture,
+        # so a Google user has one without ever visiting settings.
+        "avatarUrl": account.avatar_url
+        or (account.account_metadata or {}).get("picture"),
+        "bio": account.bio,
         "friendshipStatus": friendship,
         #: Names of destinations you both have planned.
         "sharedInterests": shared,
@@ -344,14 +348,22 @@ def _discoverable(account_id: UUID):
     )
 
 
-def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
+def suggested_people(
+    account_id: UUID, limit: int = 20, friends_only: bool = False
+) -> list[dict]:
     """People worth connecting with.
 
     People heading to the same places come first, ranked by how many
     destinations you share, then everyone else newest-first so the list is
-    never empty. Existing friends are dropped - there is nothing to do with
-    them here - but pending requests stay, tagged with their direction, so
-    you can see an invite you already sent or received.
+    never empty.
+
+    Two opposite audiences, hence friends_only:
+      - discovery (default) hides existing friends, since there is nothing
+        to do with them there, but keeps pending requests so you can see an
+        invite already in flight
+      - friends_only=True returns *only* friends, which is what a "pick
+        people for this chat" list needs - the chat endpoints reject anyone
+        else with a 403
     """
     with session_scope() as session:
         friendships = _friendship_map(session, account_id)
@@ -361,11 +373,16 @@ def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
             _discoverable(account_id).order_by(Account.created_at.desc())
         ).all()
 
-        people = [
-            a
-            for a in candidates
-            if friendships.get(a.account_id) not in ("friends", "blocked")
-        ]
+        if friends_only:
+            people = [
+                a for a in candidates if friendships.get(a.account_id) == "friends"
+            ]
+        else:
+            people = [
+                a
+                for a in candidates
+                if friendships.get(a.account_id) not in ("friends", "blocked")
+            ]
         # Most shared destinations first; newest account breaks the tie,
         # which the query above already ordered by.
         people.sort(key=lambda a: len(shared.get(a.account_id, [])), reverse=True)
@@ -376,9 +393,13 @@ def suggested_people(account_id: UUID, limit: int = 20) -> list[dict]:
         ]
 
 
-def search_people(account_id: UUID, query: str, limit: int = 20) -> list[dict]:
+def search_people(
+    account_id: UUID, query: str, limit: int = 20, friends_only: bool = False
+) -> list[dict]:
     """Find people by name or email. Matching on email is intentional - it is
     how you invite someone you know - but the address is never returned.
+
+    friends_only narrows to accepted friends, for the chat member picker.
     """
     term = (query or "").strip()
     if len(term) < 2:
@@ -399,6 +420,8 @@ def search_people(account_id: UUID, query: str, limit: int = 20) -> list[dict]:
         ).all()
         friendships = _friendship_map(session, account_id)
         shared = _shared_destinations(session, account_id)
+        if friends_only:
+            rows = [a for a in rows if friendships.get(a.account_id) == "friends"]
         return [
             _person(a, friendships.get(a.account_id), shared.get(a.account_id))
             for a in rows

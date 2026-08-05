@@ -165,11 +165,19 @@ def follow_user(
 def suggested_users(
     lat: Optional[float] = None,
     lng: Optional[float] = None,
+    friendsOnly: bool = False,
     account: Account = Depends(current_account),
 ) -> dict[str, Any]:
     """People worth connecting with, those heading to your destinations first.
 
     Each carries friendshipStatus so the UI can show Add friend / Requested /
     Accept / Friends without a request per person.
+
+    friendsOnly=true returns only accepted friends - use it for the chat
+    member picker, since the chat endpoints reject anyone else with a 403.
     """
-    return {"users": accounts.suggested_people(account.account_id)}
+    return {
+        "users": accounts.suggested_people(
+            account.account_id, friends_only=friendsOnly
+        )
+    }
