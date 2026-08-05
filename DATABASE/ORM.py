@@ -22,6 +22,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     Interval,
     MetaData,
     Numeric,
@@ -32,6 +33,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.engine import Engine
@@ -218,6 +220,14 @@ class PostVisibility(str, enum.Enum):
     PRIVATE = "private"
 
 
+# Shared instances for the enums now used by more than one table. A second
+# SAEnum with the same `name` is a distinct type object, so create_all emits
+# CREATE TYPE for it twice and Postgres rejects the duplicate. Every table
+# using these must reference the same object, not call _pg_enum again.
+ACTIVITY_TYPE_ENUM = _pg_enum(ActivityType, "activity_type")
+EMBEDDING_STATUS_ENUM = _pg_enum(EmbeddingStatus, "embedding_status")
+
+
 class SoftDeleteMixin:
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
@@ -354,7 +364,7 @@ class Personality(Base):
 
     # Queue state. The row is the job - there is no separate queue table.
     embedding_status: Mapped[EmbeddingStatus] = mapped_column(
-        _pg_enum(EmbeddingStatus, "embedding_status"),
+        EMBEDDING_STATUS_ENUM,
         nullable=False,
         default=EmbeddingStatus.PENDING,
         server_default=EmbeddingStatus.PENDING.value,
@@ -366,6 +376,11 @@ class Personality(Base):
     embedding_error: Mapped[Optional[str]] = mapped_column(Text)
     #: Which model produced the vector, so a migration can find stale rows.
     embedding_model: Mapped[Optional[str]] = mapped_column(String(120))
+    #: Bumped when the prefix convention or pooling changes but the model name
+    #: does not - embedding_model alone cannot detect that, and a user vector
+    #: built under a different convention is silently unusable against the
+    #: location corpus.
+    embedding_version: Mapped[Optional[str]] = mapped_column(String(32))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -485,6 +500,20 @@ class GroupMember(Base):
 
 
 class Location(Base):
+    """A real-world place a traveller could go.
+
+    Rows arrive from a batch seed (OpenStreetMap via Overpass, prose from
+    Wikipedia) rather than from the API, so most of this table is provenance
+    and queue state rather than user data.
+
+    The split that matters: `embedding_text` is a character paragraph in the
+    same register as Personality.profile_paragraph, and it is the ONLY thing
+    embedded into `vec`. Hard facts - price, hours, wheelchair, cuisine - stay
+    in their own columns and act as SQL filters. Embedding the facts alongside
+    the prose would put "EUR 22" in the same space as a taste essay and the
+    geometry stops meaning anything.
+    """
+
     __tablename__ = "locations"
     __table_args__ = (
         CheckConstraint(
@@ -494,35 +523,173 @@ class Location(Base):
             "longitude IS NULL OR longitude BETWEEN -180 AND 180",
             name="longitude_range",
         ),
+        # The seed is re-runnable because of this: ingest upserts on it rather
+        # than inserting, so a second pass over the same bbox updates instead
+        # of duplicating the corpus. Both columns are nullable so rows created
+        # by the app (no upstream source) are exempt - Postgres permits many
+        # NULLs under a unique constraint.
+        UniqueConstraint("source", "source_id", name="uq_locations_source_ref"),
         Index("ix_locations_country_name", "country", "name"),
+        # Recommendation reads filter by city then category before ranking.
+        Index("ix_locations_city_category", "city", "category"),
+        # Bounding-box lookups until this becomes PostGIS.
+        Index("ix_locations_lat_lon", "latitude", "longitude"),
+        Index("ix_locations_wikidata_qid", "wikidata_qid"),
+        # Dedupe's fallback pass groups by normalized name.
+        Index("ix_locations_name_norm", "name_norm"),
+        # The popularity prior sorts on this.
+        Index("ix_locations_popularity_score", "popularity_score"),
+        # Partial: the embed worker only ever asks for pending rows, and once
+        # the corpus is seeded almost none are. A full index on the status
+        # column would be mostly 'done' entries nobody queries.
+        Index(
+            "ix_locations_embedding_pending",
+            "location_id",
+            postgresql_where=text("embedding_status = 'pending'"),
+        ),
         _hnsw("locations", "vec"),
     )
 
     location_id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Casefolded, accent-stripped, punctuation-free form of `name`. Written by
+    #: ingest so dedupe is a SQL join instead of pulling the table into Python.
+    name_norm: Mapped[Optional[str]] = mapped_column(String(255))
     country: Mapped[Optional[str]] = mapped_column(String(120))
     city: Mapped[Optional[str]] = mapped_column(String(150))
+    #: The region the ingest job queried. `city` comes from addr:city, which is
+    #: sparse on OSM POIs; this is the fallback that is always populated.
+    region: Mapped[Optional[str]] = mapped_column(String(150))
     address: Mapped[Optional[str]] = mapped_column(String(512))
     # ERD "location: location" - swap for PostGIS Geography(POINT) if you need
     # radius queries.
     latitude: Mapped[Optional[float]] = mapped_column(Float)
     longitude: Mapped[Optional[float]] = mapped_column(Float)
+
+    # ---- classification -------------------------------------------------
+    #: Coarse bucket, shared with ItineraryItem.activity_type. This is what
+    #: the diversity cap counts over when it stops the top 20 from being
+    #: twenty museums.
+    category: Mapped[ActivityType] = mapped_column(
+        ACTIVITY_TYPE_ENUM,
+        nullable=False,
+        default=ActivityType.OTHER,
+        server_default=ActivityType.OTHER.value,
+    )
+    #: The raw OSM tag value the category was derived from ("viewpoint",
+    #: "art_gallery"). Finer than `category` without needing a new enum member.
+    subcategory: Mapped[Optional[str]] = mapped_column(String(64))
+
+    # ---- filterable facts ------------------------------------------------
     ticket_ref: Mapped[TicketRequirement] = mapped_column(
         _pg_enum(TicketRequirement, "ticket_requirement"),
         nullable=False,
         default=TicketRequirement.NONE,
     )
+    #: OSM's opening_hours is its own DSL ("Tu-Su 09:00-18:00"), not JSON, so
+    #: it is stored wrapped: {"raw": "...", "format": "osm"}. Parse on read if
+    #: ever needed; parsing at ingest would lose the original.
     opening_hour: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
     price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
-    picture: Mapped[Optional[str]] = mapped_column(String(2048))
-    review: Mapped[dict[str, Any]] = mapped_column(
+    #: 'yes' | 'no' | 'limited' | 'designated', straight from OSM. A hard
+    #: filter in the recommendation query, never a distance term.
+    wheelchair: Mapped[Optional[str]] = mapped_column(String(16))
+    #: OSM's semicolon-separated cuisine list ("italian;pizza"). Feeds the
+    #: dietary hard filter.
+    cuisine: Mapped[Optional[str]] = mapped_column(String(255))
+    website: Mapped[Optional[str]] = mapped_column(String(512))
+    phone: Mapped[Optional[str]] = mapped_column(String(64))
+    #: Every upstream tag, mapped or not. Cheap to carry and it means a change
+    #: to the tag mapping can be replayed from the database instead of hitting
+    #: Overpass for the whole corpus again.
+    tags: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default="{}"
     )
+
+    # ---- provenance ------------------------------------------------------
+    #: "osm" for the seed corpus, NULL for rows the app creates itself.
+    source: Mapped[Optional[str]] = mapped_column(String(32))
+    #: Upstream identity within `source`, e.g. "way/12345".
+    source_id: Mapped[Optional[str]] = mapped_column(String(64))
+    #: Hash of the upstream prose plus the tags that feed embedding_text. A
+    #: refresh only flips embedding_status back to pending when this changes,
+    #: so re-ingesting a city does not re-embed a corpus that did not move.
+    source_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    #: Join key to Wikidata/Wikipedia, and dedupe's primary signal - OSM
+    #: returns the same place as both a node and a way, and these agree.
+    wikidata_qid: Mapped[Optional[str]] = mapped_column(String(24))
+    wikipedia_lang: Mapped[Optional[str]] = mapped_column(String(8))
+    wikipedia_title: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # ---- prose and embedding --------------------------------------------
+    #: Upstream text as fetched (a Wikipedia intro extract), unedited. Kept
+    #: separate from embedding_text so the prompt can be changed and rerun
+    #: without re-fetching.
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    #: The exact paragraph that produced `vec`. Non-negotiable: it is what
+    #: lets a model swap re-embed the corpus without re-running the LLM and
+    #: getting different text back.
+    embedding_text: Mapped[Optional[str]] = mapped_column(Text)
+    #: 'llm' when rewritten from prose, 'template' when built from tags alone.
+    #: Worth knowing when the retrieval quality of a slice looks off.
+    embedding_text_source: Mapped[Optional[str]] = mapped_column(String(16))
     vec: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIM), nullable=True
     )
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(120))
+    embedding_version: Mapped[Optional[str]] = mapped_column(String(32))
+    #: Queue state, same convention as Personality: the row is the job.
+    embedding_status: Mapped[EmbeddingStatus] = mapped_column(
+        EMBEDDING_STATUS_ENUM,
+        nullable=False,
+        default=EmbeddingStatus.PENDING,
+        server_default=EmbeddingStatus.PENDING.value,
+    )
+    embedding_attempts: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    embedding_error: Mapped[Optional[str]] = mapped_column(Text)
+
+    # ---- popularity ------------------------------------------------------
+    #: Blended 0..1 prior. Content similarity has no notion of "this place is
+    #: actually worth going to" and will happily rank an unnamed roadside
+    #: bench above the Prado; this is the small-weight correction.
+    popularity_score: Mapped[Optional[float]] = mapped_column(Float)
+    #: Inputs to popularity_score, kept so the formula can be retuned without
+    #: re-fetching. Pageviews are a genuine proxy for public interest.
+    wikipedia_pageviews: Mapped[Optional[int]] = mapped_column(Integer)
+    wikidata_sitelinks: Mapped[Optional[int]] = mapped_column(SmallInteger)
+    #: Reserved for a licensed ratings source. OSM has no ratings, and Google
+    #: / TripAdvisor / Yelp all forbid storing theirs, so these stay NULL
+    #: until such a source exists - see LocationReview.
+    rating: Mapped[Optional[float]] = mapped_column(Float)
+    rating_count: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # ---- denormalized rollups (pre-existing columns) ---------------------
+    #: Primary image URL, mirrored from LocationImage so a list view does not
+    #: need the join. LocationImage remains the source of truth, because a URL
+    #: with no licence and no attribution beside it is not safely displayable.
+    picture: Mapped[Optional[str]] = mapped_column(String(2048))
+    #: Rating rollup: {"rating": 4.4, "count": 812, "sources": [...]}.
+    review: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    #: Last time an ingest run saw this POI upstream. A row whose last_seen_at
+    #: falls far behind the rest of its region has probably been deleted from
+    #: OSM; that is a retirement signal, not something to act on at ingest.
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     itinerary_items: Mapped[list["ItineraryItem"]] = relationship(
         back_populates="location"
@@ -535,6 +702,104 @@ class Location(Base):
     )
     memories: Mapped[list["TripMemory"]] = relationship(back_populates="location")
     posts: Mapped[list["Post"]] = relationship(back_populates="location")
+    images: Mapped[list["LocationImage"]] = relationship(
+        back_populates="location",
+        cascade="all, delete-orphan",
+        order_by="(LocationImage.is_primary.desc(), LocationImage.created_at)",
+    )
+    reviews: Mapped[list["LocationReview"]] = relationship(
+        back_populates="location", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Location {self.name!r} {self.source}/{self.source_id}>"
+
+
+class LocationImage(Base):
+    """A picture of a location, with the attribution needed to display it.
+
+    A separate table rather than a URL column because the licence and credit
+    are not optional metadata - CC BY-SA images are only usable *with* them,
+    so storing a bare URL creates a row that cannot legally be shown.
+
+    Sources are Wikimedia Commons and Wikipedia page images (CC, attributable)
+    and OSM's own `image` tag. Deliberately not Google Places photos: their
+    terms permit caching place_id and nothing else.
+    """
+
+    __tablename__ = "location_images"
+    __table_args__ = (
+        # url is too long to index directly (btree tops out around 2704
+        # bytes), so uniqueness is enforced on its hash.
+        UniqueConstraint("location_id", "url_sha256", name="uq_location_images_url"),
+        Index("ix_location_images_location_id", "location_id"),
+    )
+
+    image_id: Mapped[uuid.UUID] = _uuid_pk()
+    location_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("locations.location_id", ondelete="CASCADE"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    url_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    thumb_url: Mapped[Optional[str]] = mapped_column(String(2048))
+    #: "wikimedia_commons" | "wikipedia" | "osm"
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: SPDX-ish licence short name, e.g. "CC-BY-SA-4.0", "public-domain".
+    license: Mapped[Optional[str]] = mapped_column(String(64))
+    #: Ready-to-render credit line.
+    attribution: Mapped[Optional[str]] = mapped_column(String(512))
+    author: Mapped[Optional[str]] = mapped_column(String(255))
+    width: Mapped[Optional[int]] = mapped_column(Integer)
+    height: Mapped[Optional[int]] = mapped_column(Integer)
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    location: Mapped["Location"] = relationship(back_populates="images")
+
+
+class LocationReview(Base):
+    """A third-party review of a location.
+
+    Empty by design for now. There is no open review corpus: OSM has none, and
+    Google, TripAdvisor and Yelp all prohibit storing review text - that is a
+    licensing wall, not a rate limit. Until a licensed feed exists the
+    recommendation query uses Location.popularity_score instead, which is
+    derived from Wikipedia pageviews and Wikidata sitelinks.
+
+    The table exists so that adding such a feed is an insert rather than a
+    migration, and so reviews never get flattened into the embedded paragraph
+    - a review is evidence about a place, not a description of its character.
+    """
+
+    __tablename__ = "location_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "rating IS NULL OR rating BETWEEN 0 AND 5", name="rating_range"
+        ),
+        UniqueConstraint("source", "source_review_id", name="uq_location_reviews_ref"),
+        Index("ix_location_reviews_location_id", "location_id"),
+    )
+
+    review_id: Mapped[uuid.UUID] = _uuid_pk()
+    location_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("locations.location_id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_review_id: Mapped[Optional[str]] = mapped_column(String(128))
+    rating: Mapped[Optional[float]] = mapped_column(Float)
+    body: Mapped[Optional[str]] = mapped_column(Text)
+    author: Mapped[Optional[str]] = mapped_column(String(255))
+    lang: Mapped[Optional[str]] = mapped_column(String(8))
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    location: Mapped["Location"] = relationship(back_populates="reviews")
 
 
 class Trip(SoftDeleteMixin, Base):
@@ -624,7 +889,7 @@ class ItineraryItem(Base):
     time: Mapped[Optional[time]] = mapped_column(Time)
     duration: Mapped[Optional[timedelta]] = mapped_column(Interval)
     activity_type: Mapped[ActivityType] = mapped_column(
-        _pg_enum(ActivityType, "activity_type"),
+        ACTIVITY_TYPE_ENUM,
         nullable=False,
         default=ActivityType.OTHER,
     )
@@ -874,6 +1139,8 @@ __all__ = [
     "Group",
     "GroupMember",
     "Location",
+    "LocationImage",
+    "LocationReview",
     "Trip",
     "ItineraryItem",
     "TripMemory",
@@ -892,4 +1159,6 @@ __all__ = [
     "PostVisibility",
     "EmbeddingStatus",
     "FriendshipStatus",
+    "ACTIVITY_TYPE_ENUM",
+    "EMBEDDING_STATUS_ENUM",
 ]
