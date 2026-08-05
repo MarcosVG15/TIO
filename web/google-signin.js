@@ -86,9 +86,20 @@
       // Measure before hiding - offsetWidth is 0 on a hidden element.
       var width = Math.max(240, Math.min(el.offsetWidth || 320, 400));
 
+      // Breathing room so the Google button reads as its own choice rather
+      // than part of the Sign in / Sign up tab group directly above it.
       var holder = document.createElement("div");
       holder.setAttribute("data-tio-gsi-holder", "1");
-      holder.style.cssText = "display:flex;justify-content:center;width:100%;";
+      holder.style.cssText = [
+        "display:flex",
+        "justify-content:center",
+        "width:100%",
+        "margin:22px 0 6px",
+        // GSI renders inside an iframe, so only the wrapper is styleable.
+        // Softening the corners keeps the pill shape from looking clipped.
+        "border-radius:9999px",
+        "overflow:hidden",
+      ].join(";");
 
       el.parentNode.insertBefore(holder, el);
       el.style.display = "none";
