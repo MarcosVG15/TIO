@@ -20,11 +20,35 @@
   var CLIENT_ID =
     "688537482332-9ad5p252gu6a7qhnvoe6o47qhl7dorkt.apps.googleusercontent.com";
   var TOKEN_KEY = "tio.access_token"; // must match the app's key
-  var AFTER_SIGN_IN = "/";
+  var ROUTE_HOME = "/home";
+  var ROUTE_ONBOARDING = "/onboarding";
 
   function report(message) {
     console.error("[tio-google]", message);
     window.alert(message);
+  }
+
+  /*
+   * A first-time Google user has no profile, so they belong in the
+   * questionnaire; a returning one goes straight to their trips. Asking the
+   * API rather than guessing keeps this consistent with the email flow.
+   */
+  function routeAfterSignIn(token) {
+    fetch("/api/onboarding/status", {
+      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+    })
+      .then(function (res) {
+        return res.ok ? res.json() : null;
+      })
+      .then(function (status) {
+        var done = !!(status && status.onboarding_completed);
+        window.location.replace(done ? ROUTE_HOME : ROUTE_ONBOARDING);
+      })
+      .catch(function () {
+        // Signed in either way - send them somewhere usable rather than
+        // stranding them on the login screen.
+        window.location.replace(ROUTE_HOME);
+      });
   }
 
   function onCredential(response) {
@@ -59,8 +83,9 @@
           return;
         }
         // Same key the app reads, so a plain reload restores the session.
-        window.localStorage.setItem(TOKEN_KEY, result.body.access_token);
-        window.location.replace(AFTER_SIGN_IN);
+        var token = result.body.access_token;
+        window.localStorage.setItem(TOKEN_KEY, token);
+        routeAfterSignIn(token);
       })
       .catch(function (err) {
         report("Could not reach the server: " + err.message);

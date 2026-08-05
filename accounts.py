@@ -17,7 +17,12 @@ class AccountConflict(Exception):
 
 
 class InvalidCredentials(Exception):
-    """Wrong password, unknown email, or an account with no password set."""
+    """Wrong password, or an account whose credential lives with a provider."""
+
+
+class UnknownAccount(InvalidCredentials):
+    """No account with that email. A subclass so callers that only care about
+    "sign-in failed" can still catch InvalidCredentials."""
 
 
 def _display_name(claims: GoogleClaims) -> str:
@@ -108,14 +113,25 @@ def authenticate(email: str, password: str) -> Account:
         account = session.scalar(select(Account).where(Account.email == email))
 
         if account is None:
+            # Still spend the CPU a real verification would, so response time
+            # cannot be used to probe which addresses exist.
             passwords.burn_time()
-            raise InvalidCredentials("invalid email or password")
+            # The message does distinguish "no account" from "wrong password".
+            # That is a deliberate trade: sign-up already reveals existence by
+            # returning 409 on a duplicate email, so being coy here would buy
+            # nothing while leaving a real user stuck on a sign-in form with
+            # no idea they never registered.
+            raise UnknownAccount(
+                "No account found with that email. Sign up to create one."
+            )
 
         if account.password_hash is None:
             # A provider account - the credential lives with Google, not here.
             passwords.burn_time()
             raise InvalidCredentials(
-                f"this account signs in with {account.auth_provider.value}"
+                f"This account uses {account.auth_provider.value.title()} "
+                f"sign-in. Use the {account.auth_provider.value.title()} "
+                f"button above."
             )
 
         if not passwords.verify_password(account.password_hash, password):
