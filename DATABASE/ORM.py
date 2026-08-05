@@ -24,6 +24,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Interval,
+    LargeBinary,
     MetaData,
     Numeric,
     SmallInteger,
@@ -269,7 +270,9 @@ class Account(SoftDeleteMixin, Base):
     #: Short self-introduction shown on people cards. Written by the user or
     #: generated from their profile - either way it is theirs to edit.
     bio: Mapped[Optional[str]] = mapped_column(String(300))
-    #: Explicit avatar. Falls back to the provider picture in metadata when
+    #: Where to load the profile picture from. Either an uploaded avatar
+    #: (/api/uploads/avatars/<avatar_id>, backed by a row in `avatars`) or an
+    #: external link. Falls back to the provider picture in metadata when
     #: unset, so a Google user gets one without doing anything.
     avatar_url: Mapped[Optional[str]] = mapped_column(String(2048))
     # Attribute renamed: `metadata` is reserved on a declarative class.
@@ -310,9 +313,65 @@ class Account(SoftDeleteMixin, Base):
     post_comments: Mapped[list["PostComment"]] = relationship(
         back_populates="author", cascade="all, delete-orphan"
     )
+    avatars: Mapped[list["Avatar"]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Account {self.email}>"
+
+
+class Avatar(Base):
+    """An uploaded profile picture, bytes and all.
+
+    Stored inline rather than on a filesystem: an image in the database needs
+    no volume, no shared mount between the API and the proxy, and no second
+    backup path - it is already covered by whatever backs up Postgres, and it
+    cannot go missing on a container rebuild. That trade only works because
+    these are small and rare (one per account, capped at 5 MB, served with a
+    long cache header); it is the wrong answer for trip galleries, which is
+    why `location_images` stores URLs instead.
+
+    Rows are not the profile picture on their own. `Account.avatar_url` decides
+    which one is shown, so an upload the user never saved is a row nobody
+    points at.
+    """
+
+    __tablename__ = "avatars"
+    __table_args__ = (
+        # Re-uploading the same file is the same row, so retrying an upload
+        # does not accumulate copies of one picture.
+        UniqueConstraint("account_id", "sha256", name="uq_avatars_account_sha256"),
+        Index("ix_avatars_account_id", "account_id"),
+        # The API rejects oversized uploads before they get here; this is the
+        # backstop that keeps any other writer honest.
+        CheckConstraint(
+            "byte_size > 0 AND byte_size <= 5242880",
+            name="byte_size_within_limit",
+        ),
+    )
+
+    avatar_id: Mapped[uuid.UUID] = _uuid_pk()
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), nullable=False
+    )
+    #: Sniffed from the bytes on upload, never taken from the request headers.
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Hex digest of `data`. Carries the uniqueness constraint above and is
+    #: served as the ETag.
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Postgres TOASTs anything this size out of the main heap automatically,
+    #: so the row stays cheap to scan when the bytes are not selected.
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    account: Mapped["Account"] = relationship(back_populates="avatars")
+
+    def __repr__(self) -> str:
+        return f"<Avatar {self.avatar_id} {self.content_type} {self.byte_size}B>"
 
 
 class Personality(Base):

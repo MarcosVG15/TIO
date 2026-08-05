@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.exc import SQLAlchemyError
 
 import avatars
 import bio
@@ -60,8 +61,8 @@ def upload_avatar(
 
     Returns it without saving, the same way /profile/bio/generate does: the
     user sees the picture in the form and PATCHes /api/profile with
-    {"avatarUrl": "..."} when they press Save. A file landing on the disk is
-    not consent to put it on their profile.
+    {"avatarUrl": "..."} when they press Save. A stored row is not consent to
+    put it on their profile.
     """
     # Read one byte past the limit rather than the whole stream - that is
     # enough to know it is too big, without holding an arbitrarily large
@@ -69,13 +70,13 @@ def upload_avatar(
     data = file.file.read(avatars.MAX_BYTES + 1)
 
     try:
-        url = avatars.store(account.account_id, data, keep=account.avatar_url)
+        url = avatars.store(account.account_id, data)
     except avatars.RejectedImage as exc:
         # 422, not 400: the request was well-formed, the content was not.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    except OSError as exc:
+    except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not save that picture right now. Try again.",

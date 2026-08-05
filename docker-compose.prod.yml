@@ -34,11 +34,6 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tio_database}
-      AVATAR_DIR: /data/uploads/avatars
-    volumes:
-      # Uploaded profile pictures. Without this they vanish on the next
-      # --build and every avatar_url in the database 404s.
-      - tio_uploads:/data/uploads
     # --proxy-headers makes uvicorn trust Caddy's X-Forwarded-* headers, so
     # request.url is https and client IPs are the real ones.
     command:
@@ -87,6 +82,5 @@ services:
 
 volumes:
   tio_pgdata:
-  tio_uploads:
   caddy_data:
   caddy_config:

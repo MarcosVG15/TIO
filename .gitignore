@@ -7,9 +7,6 @@ frontend/dist/
 frontend/.vite/
 *.local
 
-# Uploaded avatars when running outside Docker (AVATAR_DIR defaults here).
-uploads/
-
 # Python
 __pycache__/
 *.py[cod]

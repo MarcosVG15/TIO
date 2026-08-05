@@ -2,14 +2,17 @@
  * Avatar drag-and-drop shim.
  *
  * The deployed React bundle only offers a "Picture URL" text field - its own
- * hint says "File uploads are coming later". This adds a drop zone (and a
- * click-to-browse fallback) next to that field, POSTs the file to
- * /api/profile/avatar, and writes the URL the server returns back into the
- * field.
+ * hint says "File uploads are coming later". This replaces it with a drop zone
+ * (and a click-to-browse fallback), POSTs the file to /api/profile/avatar, and
+ * writes the URL the server returns back into the field.
  *
- * It deliberately stops there rather than saving. The field is the app's own
- * state, so pressing "Save profile" persists the picture through the normal
- * PATCH /api/profile - and a file landing on the server is not the same as
+ * "Replaces" is display:none, not removal. The input is where the React
+ * component keeps its state and what "Save profile" reads, so it has to stay
+ * in the tree - it just stops being something the user sees or types into.
+ * Rebuilding the frontend is the only way to actually delete it.
+ *
+ * Saving is left to the app. Pressing "Save profile" persists the picture
+ * through the normal PATCH /api/profile - a stored upload is not the same as
  * the user agreeing to put it on their profile.
  *
  * STOPGAP: index.html is build output. The next frontend deploy overwrites it
@@ -25,6 +28,8 @@
   var TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
   var IDLE = "Drag a photo here, or click to choose one.";
+  var FORMATS = "JPEG, PNG, GIF or WebP — up to 5 MB.";
+  var CAPTION = "Profile picture";
   var ZONE_CLASS =
     "mt-2 flex w-full cursor-pointer items-center justify-center gap-2 " +
     "rounded-xl border border-dashed border-input bg-background px-4 py-3 " +
@@ -58,17 +63,24 @@
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  // Matched on visible text: the build output has no stable id or data
-  // attribute to hook onto.
+  /*
+   * Matched on visible text, because the build output has no stable id or data
+   * attribute to hook onto - and then marked, because rewriting the caption
+   * destroys the very text that found it. A label React replaces wholesale
+   * loses the mark but gets the original caption back, so one of the two
+   * always matches.
+   */
   function pictureFields() {
     var found = [];
     var labels = document.querySelectorAll("label");
 
     for (var i = 0; i < labels.length; i++) {
       var label = labels[i];
-      if ((label.textContent || "").toLowerCase().indexOf("picture url") === -1) {
-        continue;
-      }
+      var claimed = label.getAttribute("data-tio-avatar") === "1";
+      var named =
+        (label.textContent || "").toLowerCase().indexOf("picture url") !== -1;
+      if (!claimed && !named) continue;
+
       var input = label.querySelector('input[type="text"], input:not([type])');
       if (input) found.push({ label: label, input: input });
     }
@@ -198,14 +210,48 @@
       ensurePicker().click();
     });
 
-    entry.label.appendChild(zone);
-
+    // Above the help text, where the input used to be, rather than below it.
     var spans = entry.label.querySelectorAll("span");
-    var hint = spans.length ? spans[spans.length - 1] : null;
-    if (hint && hint !== zone && !zone.contains(hint)) {
-      hint.textContent = "Paste a link, or drop a picture below.";
+    var hint = spans.length > 1 ? spans[spans.length - 1] : null;
+    if (hint) {
+      entry.label.insertBefore(zone, hint);
+    } else {
+      entry.label.appendChild(zone);
     }
     return zone;
+  }
+
+  /*
+   * Take the URL field out of the interface. It stays in the tree - the React
+   * component keeps its state there and "Save profile" reads it - but the user
+   * only ever deals with the drop zone.
+   *
+   * Re-applied on every mount pass, because a re-render restores the
+   * component's own markup and with it the field and its old caption.
+   */
+  function hideUrlField(entry) {
+    entry.label.setAttribute("data-tio-avatar", "1");
+    if (entry.input.style.display !== "none") {
+      entry.input.style.display = "none";
+    }
+
+    var spans = entry.label.querySelectorAll("span");
+    if (!spans.length) return;
+
+    // The caption is an icon element plus a text node; assigning textContent
+    // would take the icon with it, so only the text node is rewritten.
+    var caption = spans[0];
+    for (var i = 0; i < caption.childNodes.length; i++) {
+      var node = caption.childNodes[i];
+      if (node.nodeType === 3 && /picture url/i.test(node.nodeValue)) {
+        node.nodeValue = CAPTION;
+      }
+    }
+
+    var hint = spans[spans.length - 1];
+    if (hint !== caption && hint.textContent !== FORMATS) {
+      hint.textContent = FORMATS;
+    }
   }
 
   // Drag handlers live on the label, not the zone, so the whole field is a
@@ -254,6 +300,7 @@
       // discard our nodes on re-render while keeping the label itself, and a
       // marker would make a stripped field look already handled.
       if (!zoneIn(entry.label)) makeZone(entry);
+      hideUrlField(entry);
       if (!bound.has(entry.label)) {
         bindDragTarget(entry);
         bound.add(entry.label);
