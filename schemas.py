@@ -17,7 +17,7 @@ from datetime import date as date_type, time as time_type
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import AliasChoices, field_validator, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 import passwords
 from DATABASE.ORM import ActivityType, BookingStatus, TripStatus
@@ -276,8 +276,25 @@ class TripCreate(BaseModel):
     suggestion_id: Optional[str] = None
     #: What to call the trip. Falls back to the destination.
     title: Optional[str] = Field(default=None, max_length=200)
-    start_date: Optional[date_type] = None
-    end_date: Optional[date_type] = None
+    start_date: Optional[date_type] = Field(
+        default=None, validation_alias=AliasChoices("start_date", "startDate")
+    )
+    end_date: Optional[date_type] = Field(
+        default=None, validation_alias=AliasChoices("end_date", "endDate")
+    )
+
+    @field_validator("start_date", "end_date", "budget_limit", mode="before")
+    @classmethod
+    def _blank_is_absent(cls, value):
+        """An untouched form field arrives as "", not null.
+
+        Pydantic rejects an empty string as a date, so the whole request 422s
+        before the handler runs and the screen shows its generic network error.
+        The same shape of bug cost an afternoon on /trips/suggestions.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
     #: Free text describing the trip, as typed to a friend.
     prompt: Optional[str] = Field(default=None, max_length=2000)
     notes: Optional[str] = Field(default=None, max_length=2000)

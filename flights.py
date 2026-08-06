@@ -244,15 +244,22 @@ class TravelpayoutsProvider:
         origin = _validate_iata(origin, "origin")
         destination = _validate_iata(destination, "destination")
 
+        # Month granularity, not an exact day. The cache is populated by what
+        # other people actually searched for, so asking for one specific date
+        # on one specific route almost always returns nothing - measured as
+        # zero fares on every route tried, including London to Rome, while the
+        # same route with a month returns plenty. The response carries each
+        # fare's real departure date, so precision is not lost, only demanded
+        # in the wrong place.
         params = {
             "origin": origin,
             "destination": destination,
-            "depart_date": depart_date.isoformat(),
+            "depart_date": depart_date.strftime("%Y-%m"),
             "currency": currency.lower(),
             "token": self.token,
         }
         if return_date:
-            params["return_date"] = return_date.isoformat()
+            params["return_date"] = return_date.strftime("%Y-%m")
 
         try:
             response = self._http().get(

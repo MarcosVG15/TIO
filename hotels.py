@@ -1,25 +1,31 @@
-"""Hotel prices and booking links, from Travelpayouts' Hotellook API.
+"""Hotel prices and booking links, from Nuitee Connect (LiteAPI).
 
-    python hotels.py Barcelona 2026-09-01 2026-09-05
+    python hotels.py Barcelona 2026-09-01 2026-09-05 ES
 
-Configuration - the same account as flights, so one token covers both:
+Configuration:
 
-    TRAVELPAYOUTS_TOKEN    API token from the Travelpayouts dashboard
-    TRAVELPAYOUTS_MARKER   affiliate marker, embedded in booking links
-    HOTEL_PROVIDER         "hotellook" (default) or "none" to disable
+    LITEAPI_KEY        private key, server side only (sand_... or prod_...)
+    LITEAPI_BASE       override the base URL; defaults to the v3.0 production host
+    HOTEL_PROVIDER     "liteapi" (default) or "none" to disable
 
-What these prices are, precisely: Hotellook's cached "price from" per hotel for
-the requested dates. They are indicative, exactly like the flight fares - a
-starting rate someone was quoted recently, not an offer we can honour. Every
-figure that reaches a traveller has to be labelled that way, and the booking
-link is the only route to a real, bookable price.
+Two calls, not one, and that shape is forced by the API: hotels are found by
+country and city, then priced by id for a specific stay. Hotellook did both at
+once and returned a "price from"; this returns real bookable rates, which is
+worth the extra round trip - but it is why hotel lookup is capped to one city
+per plan and run concurrently with everything else.
 
-Degrading cleanly is a requirement, not a nicety. A trip plan whose flights and
-places are real is still worth showing when the hotel API is down or the
-account has no hotel access; a 500 from the whole planner because accommodation
-could not be priced is not. Every failure here returns "no offers" rather than
-raising, apart from misconfiguration, which is worth shouting about.
+The rate returned here is the TOTAL for the stay, not a nightly figure. That is
+the opposite of what Hotellook gave, and getting it backwards would show a four
+night total as a nightly rate - so the conversion happens once, here, and
+`HotelOffer` continues to carry a nightly price because that is what a budget
+line reads.
+
+Degrading cleanly is a requirement. A plan whose flights and places are real is
+still worth showing when hotels are unavailable, so every failure returns "no
+offers" rather than raising - except missing configuration, which is worth
+shouting about.
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,11 +42,8 @@ log = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(8.0, connect=4.0)
 
-#: Hotellook's cached-prices endpoint. Returns one entry per hotel with a
-#: "price from" for the stay, which is what a budget line needs.
-_CACHE_URL = "https://engine.hotellook.com/api/v2/cache.json"
-#: Resolves a free-text city to Hotellook's own location id.
-_LOOKUP_URL = "https://engine.hotellook.com/api/v2/lookup.json"
+#: Nuitee Connect v3. Hotel discovery and rating live under one host.
+_DEFAULT_BASE = "https://api.liteapi.travel/v3.0"
 
 
 class HotelError(Exception):
@@ -64,12 +67,12 @@ class HotelOffer:
     currency: str
     nights: int
     stars: Optional[int] = None
-    #: Hotellook's own 0..10 guest rating, when present.
+    #: The provider's own guest rating, when present.
     rating: Optional[float] = None
     distance_km: Optional[float] = None
     #: Never empty - an offer nobody can book is not worth showing.
     booking_url: str = ""
-    provider: str = "hotellook"
+    provider: str = "liteapi"
     #: When we read it, not when it was quoted.
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     is_cached: bool = True
@@ -144,70 +147,103 @@ def _as_float(value: Any) -> Optional[float]:
         return None
 
 
-class HotellookProvider:
-    """Cached nightly rates from Hotellook, with affiliate booking links."""
+class LiteApiProvider:
+    """Real bookable rates from Nuitee Connect."""
 
-    name = "hotellook"
+    name = "liteapi"
 
     def __init__(
         self,
-        token: Optional[str] = None,
-        marker: Optional[str] = None,
+        key: Optional[str] = None,
+        base: Optional[str] = None,
         client: Optional[httpx.Client] = None,
     ) -> None:
-        self.token = token or os.getenv("TRAVELPAYOUTS_TOKEN") or ""
-        self.marker = marker or os.getenv("TRAVELPAYOUTS_MARKER") or ""
-        if not self.token:
-            raise NotConfigured("TRAVELPAYOUTS_TOKEN is not set")
-        # Injectable so the search logic is testable without the network.
+        self.key = key or os.getenv("LITEAPI_KEY") or ""
+        self.base = (base or os.getenv("LITEAPI_BASE") or _DEFAULT_BASE).rstrip("/")
+        if not self.key:
+            raise NotConfigured("LITEAPI_KEY is not set")
         self._client = client
 
     def _http(self) -> httpx.Client:
         if self._client is None:
-            self._client = httpx.Client(timeout=_TIMEOUT)
+            self._client = httpx.Client(
+                timeout=_TIMEOUT, headers={"X-API-Key": self.key}
+            )
         return self._client
 
-    def booking_url(self, city: str, check_in: date, check_out: date, adults: int) -> str:
-        """Where the traveller completes the booking.
-
-        Search-by-city rather than deep-linking one hotel: the cached rate is
-        indicative, so sending someone to a specific hotel page implies a
-        precision the price does not have. The search lands on the same city
-        and dates and lets them see what is genuinely available.
-        """
-        params = [
-            f"destination={httpx.URL(path=city).path.lstrip('/')}",
-            f"checkIn={check_in.isoformat()}",
-            f"checkOut={check_out.isoformat()}",
-            f"adults={max(1, adults)}",
-        ]
-        if self.marker:
-            params.append(f"marker={self.marker}")
-        return "https://search.hotellook.com/?" + "&".join(params)
-
-    def _location_id(self, city: str) -> Optional[int]:
-        """Hotellook's id for a city name, or None if it does not know it."""
+    def hotels_in(
+        self, city: str, country_code: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Hotel records for a city. `countryCode` is required by the API."""
         try:
             response = self._http().get(
-                _LOOKUP_URL,
+                f"{self.base}/data/hotels",
                 params={
-                    "query": city,
-                    "lang": "en",
-                    "lookFor": "city",
-                    "limit": 1,
-                    "token": self.token,
+                    "countryCode": country_code.upper(),
+                    "cityName": city,
+                    "limit": max(1, limit),
                 },
             )
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            log.info("hotel lookup failed for %r: %s", city, exc)
-            return None
+            log.info("hotel lookup failed for %s/%s: %s", city, country_code, exc)
+            return []
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        return [row for row in (data or []) if isinstance(row, dict)]
 
-        locations = (payload.get("results") or {}).get("locations") or []
-        if not locations:
-            return None
-        return _as_int(locations[0].get("id"))
+    def rates_for(
+        self,
+        hotel_ids: list[str],
+        check_in: date,
+        check_out: date,
+        adults: int,
+        currency: str,
+        nationality: str,
+    ) -> dict[str, Any]:
+        """hotelId -> cheapest rate object, for one stay."""
+        if not hotel_ids:
+            return {}
+        body = {
+            "hotelIds": hotel_ids,
+            "checkin": check_in.isoformat(),
+            "checkout": check_out.isoformat(),
+            "occupancies": [{"adults": max(1, adults), "rooms": 1}],
+            "currency": currency.upper(),
+            "guestNationality": (nationality or "GB").upper()[:2],
+            # Their own cap, so a slow supplier cannot outlast our budget.
+            "timeout": 5,
+        }
+        try:
+            response = self._http().post(f"{self.base}/hotels/rates", json=body)
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            log.info("hotel rates failed for %d hotel(s): %s", len(hotel_ids), exc)
+            return {}
+
+        cheapest: dict[str, Any] = {}
+        for entry in (payload.get("data") or []):
+            if not isinstance(entry, dict):
+                continue
+            hotel_id = str(entry.get("hotelId") or "")
+            best: Optional[Decimal] = None
+            best_rate: Optional[dict[str, Any]] = None
+            for room in entry.get("roomTypes") or []:
+                for rate in (room or {}).get("rates") or []:
+                    for total in ((rate or {}).get("retailRate") or {}).get("total") or []:
+                        amount = _as_decimal((total or {}).get("amount"))
+                        if amount is None:
+                            continue
+                        if best is None or amount < best:
+                            best, best_rate = amount, {
+                                "amount": amount,
+                                "currency": total.get("currency") or currency.upper(),
+                                "rate": rate,
+                            }
+            if hotel_id and best_rate:
+                cheapest[hotel_id] = best_rate
+        return cheapest
 
     def search(
         self,
@@ -217,67 +253,56 @@ class HotellookProvider:
         adults: int = 1,
         currency: str = "EUR",
         limit: int = 5,
+        country_code: Optional[str] = None,
+        nationality: str = "GB",
     ) -> list[HotelOffer]:
-        """Cheapest cached rates for a city and stay.
+        """Cheapest bookable rates for a city and stay, or an empty list.
 
-        Never raises on a provider failure. Accommodation is one line of a plan
-        and the rest of the plan is still useful without it; a planner that
-        500s because a hotel API had a bad minute is worse than one that says
-        nothing about hotels.
+        Never raises on a provider failure: accommodation is one line of a plan
+        and the rest is still useful without it.
         """
-        if check_out <= check_in:
+        if check_out <= check_in or not country_code:
+            # No country code means the API cannot be queried at all - it is a
+            # required parameter, not an optional filter.
             return []
 
         nights = _nights(check_in, check_out)
-        try:
-            response = self._http().get(
-                _CACHE_URL,
-                params={
-                    "location": city,
-                    "checkIn": check_in.isoformat(),
-                    "checkOut": check_out.isoformat(),
-                    "adults": max(1, adults),
-                    "currency": currency.lower(),
-                    "limit": max(1, limit),
-                    "token": self.token,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            log.info("hotel search failed for %r: %s", city, exc)
+        found = self.hotels_in(city, country_code, limit=max(limit * 3, 10))
+        if not found:
             return []
 
-        # The endpoint returns a bare list; tolerate a wrapped object too
-        # rather than trusting one undocumented shape.
-        rows = payload if isinstance(payload, list) else payload.get("hotels") or []
-        link = self.booking_url(city, check_in, check_out, adults)
+        by_id = {str(h.get("id")): h for h in found if h.get("id")}
+        priced = self.rates_for(
+            list(by_id)[:20], check_in, check_out, adults, currency, nationality
+        )
 
         offers: list[HotelOffer] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            name = row.get("hotelName") or row.get("name")
-            # priceFrom is the whole stay on this endpoint, so divide it back
-            # out - a budget reads per night and multiplies by nights itself.
-            stay_total = _as_decimal(row.get("priceFrom") or row.get("priceAvg"))
-            if not name or stay_total is None:
-                continue
-            nightly = (stay_total / nights).quantize(Decimal("0.01"))
+        for hotel_id, rate in priced.items():
+            hotel = by_id.get(hotel_id) or {}
+            total = rate["amount"]
+            # Their amount is the whole stay. HotelOffer carries a nightly
+            # figure because that is what a budget line reads, so divide once
+            # here - and total_price multiplies it straight back.
+            nightly = (total / nights).quantize(Decimal("0.01"))
             offers.append(
                 HotelOffer(
                     city=city,
-                    name=str(name),
+                    name=str(hotel.get("name") or "Hotel"),
                     check_in=check_in,
                     check_out=check_out,
                     nightly_price=nightly,
-                    currency=currency.upper(),
+                    currency=str(rate["currency"]),
                     nights=nights,
-                    stars=_as_int(row.get("stars")),
-                    rating=_as_float(row.get("rating")),
-                    distance_km=_as_float(row.get("distance")),
-                    booking_url=link,
-                    raw=row,
+                    stars=_as_int(hotel.get("stars")),
+                    rating=_as_float(hotel.get("rating")),
+                    booking_url=(
+                        f"https://www.google.com/search?q="
+                        f"{httpx.URL(path=str(hotel.get('name') or city)).path.lstrip('/')}"
+                        f"+{city}+hotel"
+                    ),
+                    provider=self.name,
+                    is_cached=False,
+                    raw={"hotel": hotel, "rate": rate.get("rate")},
                 )
             )
 
@@ -287,13 +312,13 @@ class HotellookProvider:
 
 def get_provider() -> HotelProvider:
     """The configured provider, or a null one when hotels are switched off."""
-    choice = (os.getenv("HOTEL_PROVIDER") or "hotellook").lower()
+    choice = (os.getenv("HOTEL_PROVIDER") or "liteapi").lower()
     if choice in {"none", "off", "null"}:
         return NullProvider()
     try:
-        return HotellookProvider()
+        return LiteApiProvider()
     except NotConfigured:
-        log.info("no TRAVELPAYOUTS_TOKEN; hotel search disabled")
+        log.info("no LITEAPI_KEY; hotel search disabled")
         return NullProvider()
 
 
