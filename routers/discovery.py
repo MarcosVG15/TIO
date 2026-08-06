@@ -7,6 +7,7 @@ existing, so they unblock once the embedding pipeline runs.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -27,6 +28,29 @@ log = logging.getLogger(__name__)
 #: from memory is what keeps the home page inside the request budget.
 _SHELF_CACHE: dict[tuple, tuple[float, list]] = {}
 SHELF_CACHE_TTL = 300.0
+
+#: One rebuild at a time, and never inside a request. Without the guard a slow
+#: aggregate under load would have every visitor start their own copy of it,
+#: which is how a busy database becomes an unreachable one.
+_REFRESHING = threading.Lock()
+
+
+def _rebuild(country: Optional[str], days: int, limit: int) -> None:
+    """Recompute the shelf off the request path, best effort."""
+    if not _REFRESHING.acquire(blocking=False):
+        return
+    try:
+        recommend.top_destinations(country=country, days=days, limit=25)
+    except Exception as exc:  # noqa: BLE001 - a background retry may simply fail
+        log.info("background destination refresh failed: %s", exc)
+    finally:
+        _REFRESHING.release()
+
+
+def _schedule_refresh(country: Optional[str], days: int, limit: int) -> None:
+    threading.Thread(
+        target=_rebuild, args=(country, days, limit), daemon=True
+    ).start()
 
 router = APIRouter(tags=["discovery"])
 
@@ -163,20 +187,34 @@ def recommended_destinations(
 
     # Candidates come from counting, not from nearest-neighbour: see
     # recommend.top_destinations for why. Personalisation is the next stage.
+    stale = False
     try:
         grouped = recommend.top_destinations(country=country, days=days, limit=25)
     except SQLAlchemyError as exc:
-        # Almost always the aggregate exceeding its statement timeout for want
-        # of an index. A 500 here reads to the user as "the server is down";
-        # this says what is actually wrong and keeps the page alive.
-        log.error("destination lookup failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Destinations are taking too long to load. The locations index "
-                "may still be building."
-            ),
-        ) from exc
+        # The database is shared with a corpus enrichment job that reads
+        # terabytes, so losing the race to a statement timeout is a normal
+        # event, not an exceptional one. Falling back to the last shelf that
+        # worked is almost always right: which cities are worth visiting does
+        # not change minute to minute, and an out-of-date answer beats an
+        # apology by a wide margin.
+        log.warning("destination lookup failed, trying last good: %s", exc)
+        grouped = recommend.last_good_destinations(country=country, days=days, limit=25)
+        stale = True
+        if not grouped:
+            # Nothing has ever succeeded on this server, so there is genuinely
+            # nothing to show. Only now is an error the honest answer.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Destinations are still being prepared. This usually takes "
+                    "a few minutes on a new server."
+                ),
+            ) from exc
+
+    if stale:
+        # Serve it, then rebuild out of band so the next visitor gets fresh
+        # data without anybody having waited for it.
+        _schedule_refresh(country, days, limit)
     if not grouped:
         return {
             "destinations": [],

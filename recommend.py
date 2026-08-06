@@ -64,6 +64,18 @@ log = logging.getLogger(__name__)
 _DESTINATION_CACHE: dict[tuple, tuple[float, list]] = {}
 DESTINATION_CACHE_TTL = 600.0
 
+#: The last answer that worked, per key, with no expiry. Separate from the TTL
+#: cache on purpose: when the database is too busy to aggregate, a shelf from
+#: twenty minutes ago is worth incomparably more than an error box. Cities
+#: worth visiting do not change on a timescale where staleness matters.
+_LAST_GOOD: dict[tuple, list] = {}
+
+#: A precomputed roll-up of the same aggregate, refreshed out of band. When it
+#: exists the request reads a few thousand rows instead of scanning millions,
+#: which is the difference between a shelf that is always fast and one that is
+#: fast only when nothing else is using the database.
+SUMMARY_VIEW = "destination_summary"
+
 #: How many candidates to pull per member, and for the centroid.
 PER_MEMBER_K = 40
 
@@ -1033,16 +1045,63 @@ def top_destinations(
         # Well inside the browser's twelve seconds, so a slow query surfaces
         # as a handled error rather than as an aborted request.
         session.execute(text("SET LOCAL statement_timeout = '6s'"))
-        rows = session.execute(
-            select(
-                Location.city,
-                Location.country,
-                func.count().label("places"),
-                func.sum(func.coalesce(Location.wikipedia_pageviews, 0)).label("views"),
+
+        # The precomputed roll-up, when it has been built. Checked rather than
+        # attempted-and-caught because a failed statement aborts the
+        # transaction, and recovering from that is more code than asking first.
+        has_summary = session.scalar(
+            text("SELECT to_regclass(:name)"), {"name": SUMMARY_VIEW}
+        )
+        if has_summary is not None:
+            sql = (
+                f"SELECT city, country, places, views FROM {SUMMARY_VIEW} "
+                "WHERE places >= :floor"
             )
-            .where(*conditions)
-            .group_by(Location.city, Location.country)
-            .having(func.count() >= floor)
+            params: dict[str, object] = {"floor": floor, "limit": limit}
+            if country:
+                sql += " AND lower(country) = :country"
+                params["country"] = country.lower()
+            sql += " ORDER BY views DESC, places DESC LIMIT :limit"
+            rows = session.execute(text(sql), params).all()
+        else:
+            rows = _live_aggregate(session, conditions, floor, limit)
+
+        destinations = _with_places(session, rows, conditions, days)
+
+    _DESTINATION_CACHE[cache_key] = (time.monotonic(), list(destinations))
+    _LAST_GOOD[cache_key] = list(destinations)
+    return destinations
+
+
+def last_good_destinations(
+    country: Optional[str] = None,
+    days: int = 4,
+    limit: int = 25,
+    min_places: Optional[int] = None,
+) -> Optional[list[Destination]]:
+    """The most recent successful answer for this key, however old.
+
+    The frontend has twelve seconds and the database is shared with a corpus
+    enrichment job; a request that loses that race should show yesterday's
+    shelf, not an apology.
+    """
+    floor = min_places if min_places is not None else max(3, days * 2)
+    cached = _LAST_GOOD.get(((country or "").lower(), floor, limit))
+    return list(cached) if cached else None
+
+
+def _live_aggregate(session, conditions, floor: int, limit: int):
+    """Count it now. The fallback when no summary has been built yet."""
+    return session.execute(
+        select(
+            Location.city,
+            Location.country,
+            func.count().label("places"),
+            func.sum(func.coalesce(Location.wikipedia_pageviews, 0)).label("views"),
+        )
+        .where(*conditions)
+        .group_by(Location.city, Location.country)
+        .having(func.count() >= floor)
             # Total attention the city commands, then sheer volume of things to
             # do. Both are proxies for "somewhere people actually go", and the
             # order matters while enrichment is incomplete: with pageviews
@@ -1052,32 +1111,36 @@ def top_destinations(
             # recovers automatically as pageviews land.
             .order_by(func.sum(func.coalesce(Location.wikipedia_pageviews, 0)).desc(),
                       func.count().desc())
-            .limit(limit)
+        .limit(limit)
+    ).all()
+
+
+def _with_places(session, rows, conditions, days: int) -> list[Destination]:
+    """Attach the best-known places to each city.
+
+    One indexed lookup per city rather than one scan: these are the evidence a
+    card shows and the raw material a route is built from, and they have to be
+    real rows, not counts.
+    """
+    destinations: list[Destination] = []
+    for city, city_country, _places, _views in rows:
+        best = session.scalars(
+            select(Location)
+            .where(
+                *conditions,
+                Location.city == city,
+                Location.country == city_country,
+            )
+            .order_by(
+                Location.wikipedia_pageviews.desc().nullslast(),
+                Location.wikidata_sitelinks.desc().nullslast(),
+            )
+            .limit(max(12, days * 4))
         ).all()
 
-        destinations: list[Destination] = []
-        for city, city_country, places, views in rows:
-            # The evidence: the best-known places there, which are also what a
-            # route through the city would be built from.
-            best = session.scalars(
-                select(Location)
-                .where(
-                    *conditions,
-                    Location.city == city,
-                    Location.country == city_country,
-                )
-                .order_by(
-                    Location.wikipedia_pageviews.desc().nullslast(),
-                    Location.wikidata_sitelinks.desc().nullslast(),
-                )
-                .limit(max(12, days * 4))
-            ).all()
-
-            destination = Destination(city=city, country=city_country or "")
-            destination.places = [_to_candidate(row) for row in best]
-            destinations.append(destination)
-
-    _DESTINATION_CACHE[cache_key] = (time.monotonic(), list(destinations))
+        destination = Destination(city=city, country=city_country or "")
+        destination.places = [_to_candidate(row) for row in best]
+        destinations.append(destination)
     return destinations
 
 

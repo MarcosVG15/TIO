@@ -49,6 +49,31 @@ BODY_TAGS = [
 #: attributes, which are inert here but harmless.
 HEAD_TAGS = [
     (
+        # Fade every page banner into the background.
+        #
+        # The builder renders all of them through one component - a <section
+        # class="relative z-10 leading-[0]"> wrapping a full-width <img> - with
+        # no fade of its own. The banners that look faded have the gradient
+        # painted into the JPEG (that is what "-flush-" means in their file
+        # names); the illustrations served from the builder's CDN do not, so
+        # they stop dead against the page. One mask on the shared component
+        # gives every banner the same soft edge whatever the file does.
+        #
+        # Scoped to that section rather than to `img`, because the same scene
+        # files are also used as small cards on the landing page and masking
+        # those would look broken. A mask rather than an overlay so it works on
+        # any background colour without hard-coding the cream.
+        "tio-banner-fade",
+        "<style id=\"tio-banner-fade\">"
+        "section[class*='leading-[0]']>img{"
+        "-webkit-mask-image:linear-gradient(to bottom,#000 0%,#000 58%,transparent 100%);"
+        "mask-image:linear-gradient(to bottom,#000 0%,#000 58%,transparent 100%);"
+        "-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;"
+        "-webkit-mask-size:100% 100%;mask-size:100% 100%;"
+        "}"
+        "</style>"
+    ),
+    (
         "emrldco.com",
         '<script nowprocket data-noptimize="1" data-cfasync="false" '
         'data-wpfc-render="false" seraph-accel-crit="1" data-no-defer="1" '
