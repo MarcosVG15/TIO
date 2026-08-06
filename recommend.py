@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Optional, Sequence
@@ -56,6 +57,12 @@ from DATABASE.ORM import (
 )
 
 log = logging.getLogger(__name__)
+
+#: The destination list is the same for everybody and changes only when the
+#: corpus does, so it is cached process-wide. Without this every home-page load
+#: pays for a full aggregate, and the frontend gives up after twelve seconds.
+_DESTINATION_CACHE: dict[tuple, tuple[float, list]] = {}
+DESTINATION_CACHE_TTL = 600.0
 
 #: How many candidates to pull per member, and for the centroid.
 PER_MEMBER_K = 40
@@ -949,6 +956,11 @@ def top_destinations(
     """
     floor = min_places if min_places is not None else max(3, days * 2)
 
+    cache_key = ((country or "").lower(), floor, limit)
+    cached = _DESTINATION_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached[0]) < DESTINATION_CACHE_TTL:
+        return list(cached[1])
+
     conditions = [
         Location.vec.is_not(None),
         Location.city.is_not(None),
@@ -972,7 +984,9 @@ def top_destinations(
         # Fail fast rather than hang. A slow aggregate that eventually returns
         # is worse than a quick error: the browser has already given up, and
         # the connection stays pinned behind it.
-        session.execute(text("SET LOCAL statement_timeout = '8s'"))
+        # Well inside the browser's twelve seconds, so a slow query surfaces
+        # as a handled error rather than as an aborted request.
+        session.execute(text("SET LOCAL statement_timeout = '6s'"))
         rows = session.execute(
             select(
                 Location.city,
@@ -1012,6 +1026,7 @@ def top_destinations(
             destination.places = [_to_candidate(row) for row in best]
             destinations.append(destination)
 
+    _DESTINATION_CACHE[cache_key] = (time.monotonic(), list(destinations))
     return destinations
 
 

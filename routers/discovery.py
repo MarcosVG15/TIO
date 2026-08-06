@@ -7,9 +7,11 @@ existing, so they unblock once the embedding pipeline runs.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import SQLAlchemyError
 
 import accounts
 import embeddings
@@ -19,6 +21,12 @@ from DATABASE.ORM import Account
 from deps import current_account
 
 log = logging.getLogger(__name__)
+
+#: The judged shelf, per traveller. The judgement is a paid call of a few
+#: seconds and the answer does not change between page loads, so serving it
+#: from memory is what keeps the home page inside the request budget.
+_SHELF_CACHE: dict[tuple, tuple[float, list]] = {}
+SHELF_CACHE_TTL = 300.0
 
 router = APIRouter(tags=["discovery"])
 
@@ -148,9 +156,27 @@ def recommended_destinations(
             detail="Recommendations are misconfigured on the server.",
         ) from exc
 
+    cache_key = (account.account_id, (country or "").lower(), days, limit)
+    cached = _SHELF_CACHE.get(cache_key)
+    if cached and (time.monotonic() - cached[0]) < SHELF_CACHE_TTL:
+        return cached[1]
+
     # Candidates come from counting, not from nearest-neighbour: see
     # recommend.top_destinations for why. Personalisation is the next stage.
-    grouped = recommend.top_destinations(country=country, days=days, limit=25)
+    try:
+        grouped = recommend.top_destinations(country=country, days=days, limit=25)
+    except SQLAlchemyError as exc:
+        # Almost always the aggregate exceeding its statement timeout for want
+        # of an index. A 500 here reads to the user as "the server is down";
+        # this says what is actually wrong and keeps the page alive.
+        log.error("destination lookup failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Destinations are taking too long to load. The locations index "
+                "may still be building."
+            ),
+        ) from exc
     if not grouped:
         return {
             "destinations": [],
@@ -175,7 +201,7 @@ def recommended_destinations(
     judged = rerank.score_destinations(grouped, travellers)
     shelf = _one_per_country(judged, limit) if country is None else judged[:limit]
 
-    return {
+    payload = {
         "destinations": [
             {
                 "id": f"{d.city}|{d.country}",
@@ -214,6 +240,8 @@ def recommended_destinations(
         ],
         "notes": [],
     }
+    _SHELF_CACHE[cache_key] = (time.monotonic(), payload)
+    return payload
 
 
 def _one_per_country(destinations, limit: int):
