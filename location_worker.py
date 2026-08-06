@@ -207,7 +207,14 @@ def run(batch_size: int, notable_only: bool, poll_interval: float = 30.0) -> Non
 
 
 def status() -> None:
-    """Report the queue. Counts a corpus-sized table, so not instant."""
+    """Report the queue.
+
+    One pass, not several. Every figure here needs a full scan of a
+    corpus-sized table, and this is the command anyone watching progress will
+    run repeatedly - asking three times for what one query can answer made it
+    three times as slow for no extra information.
+    """
+    ready = NOTABLE & Location.embedding_text.is_not(None)
     with session_scope() as session:
         rows = session.execute(
             select(
@@ -216,35 +223,22 @@ def status() -> None:
                 func.count(Location.vec).label("have_vector"),
                 func.count(Location.embedding_text).label("have_text"),
                 func.count().filter(NOTABLE).label("notable"),
+                func.count().filter(ready).label("ready"),
+                func.count()
+                .filter(NOTABLE & Location.embedding_text.is_(None))
+                .label("no_text"),
             ).group_by(Location.embedding_status)
         ).all()
 
     space = embeddings.space()
     print(f"space: {space.model} / {space.version}")
     print(f"{'status':<12}{'rows':>12}{'vectors':>12}{'text':>12}{'notable':>12}")
-    for state, count, vectors, text, notable in rows:
+    todo = no_text = 0
+    for state, count, vectors, text, notable, ready_here, no_text_here in rows:
         name = state.value if hasattr(state, "value") else str(state)
         print(f"{name:<12}{count:>12,}{vectors:>12,}{text:>12,}{notable:>12,}")
-
-    with session_scope() as session:
-        todo = session.scalar(
-            select(func.count())
-            .select_from(Location)
-            .where(
-                Location.embedding_status == EmbeddingStatus.PENDING,
-                Location.embedding_text.is_not(None),
-                NOTABLE,
-            )
-        )
-        no_text = session.scalar(
-            select(func.count())
-            .select_from(Location)
-            .where(
-                Location.embedding_status == EmbeddingStatus.PENDING,
-                Location.embedding_text.is_(None),
-                NOTABLE,
-            )
-        )
+        if state == EmbeddingStatus.PENDING:
+            todo, no_text = ready_here, no_text_here
 
     print(f"\nnotable and ready to embed: {todo:,}")
     if no_text:
