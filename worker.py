@@ -4,6 +4,7 @@
     python worker.py --once    # drain the queue and exit
     python worker.py --status  # report the queue without embedding anything
     python worker.py --verify  # prove the config reproduces the corpus vectors
+    python worker.py --extract # rebuild profile paragraphs that were never made
 
 Runs as its own process, separate from the API. Polls for Personality rows with
 embedding_status = 'pending', embeds them, writes the vector back.
@@ -154,6 +155,11 @@ def main() -> int:
         "--status", action="store_true", help="report the queue and exit"
     )
     parser.add_argument(
+        "--extract",
+        action="store_true",
+        help="rebuild missing profile paragraphs from stored onboarding answers",
+    )
+    parser.add_argument(
         "--verify",
         action="store_true",
         help="re-embed known locations and check they match the stored vectors",
@@ -170,6 +176,18 @@ def main() -> int:
 
     if args.verify:
         return _verify()
+
+    if args.extract:
+        counts = Pipeline().reextract_missing_paragraphs()
+        print(f"rebuilt {counts['fixed']} paragraph(s) and requeued them")
+        if counts["still_failing"]:
+            print(f"{counts['still_failing']} still produced nothing usable")
+        if counts["no_intake"]:
+            print(
+                f"{counts['no_intake']} have no stored questionnaire at all - "
+                f"those people must redo onboarding"
+            )
+        return 0
 
     pipeline = Pipeline()
 

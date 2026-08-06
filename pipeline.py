@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from DATABASE.ORM import (
     Account,
@@ -377,6 +377,83 @@ class Pipeline:
                     if personality.embedding_attempts >= max_attempts
                     else EmbeddingStatus.PENDING
                 )
+
+    def reextract_missing_paragraphs(self, limit: int = 50) -> dict[str, int]:
+        """Rebuild profile_paragraph for profiles that never got one.
+
+        Extraction is allowed to fail during onboarding - losing someone's
+        signup because OpenAI had a bad minute is worse than storing their
+        answers and enriching later - and `discussion_json` keeps the raw
+        intake for exactly this. Without a paragraph there is nothing to embed,
+        so those rows sit at failed forever and the person never gets
+        recommendations.
+
+        Returns counts: fixed, no_intake (nothing stored to work from), and
+        still_failing (the LLM ran but produced nothing usable).
+
+        Deliberately a command rather than something the worker loop retries on
+        its own: each attempt is a paid call, and a row that cannot be
+        extracted would otherwise be retried forever.
+        """
+        with session_scope() as session:
+            rows = session.scalars(
+                select(Personality)
+                .where(
+                    or_(
+                        Personality.profile_paragraph.is_(None),
+                        Personality.profile_paragraph == "",
+                    )
+                )
+                .limit(limit)
+            ).all()
+            # Read the intake out while the rows are attached.
+            pending = [
+                (
+                    p.account_id,
+                    list((p.discussion_json or {}).get("questionnaire") or []),
+                    list((p.discussion_json or {}).get("conversation") or []),
+                )
+                for p in rows
+            ]
+
+        counts = {"fixed": 0, "no_intake": 0, "still_failing": 0}
+
+        for account_id, questionnaire, conversation in pending:
+            if not questionnaire and not conversation:
+                # Nothing was ever stored - the questionnaire has to be
+                # answered again; no amount of retrying invents it.
+                counts["no_intake"] += 1
+                log.warning(
+                    "account %s has no stored intake; onboarding must be redone",
+                    account_id,
+                )
+                continue
+
+            # Outside the transaction: slow and paid, and holding a connection
+            # across it would pin one for the duration.
+            profile = self._extract_profile(questionnaire, conversation)
+            if profile is None or not (profile.profile_paragraph or "").strip():
+                counts["still_failing"] += 1
+                continue
+
+            with session_scope() as session:
+                account = session.scalar(
+                    select(Account).where(
+                        Account.account_id == account_id,
+                        Account.deleted_at.is_(None),
+                    )
+                )
+                if account is None:
+                    continue
+                personality = self._persist_profile(
+                    session, account, profile, questionnaire, conversation
+                )
+                # Back into the queue: the reason it failed is now gone.
+                self._enqueue_embedding(personality)
+                counts["fixed"] += 1
+                log.info("rebuilt profile paragraph for %s", account.name)
+
+        return counts
 
     def requeue_stale_processing(self, older_than: timedelta) -> int:
         """Return abandoned 'processing' rows to the queue.
