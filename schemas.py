@@ -270,6 +270,10 @@ class TripCreate(BaseModel):
 
     #: Where they want to go. Free text - "Kyoto, Japan", "Spain".
     destination: str = Field(min_length=2, max_length=200)
+    #: Set when the traveller picked one of the three options rather than
+    #: asking for a plan from scratch. Lets the server persist the plan that
+    #: was on the card instead of composing a different one.
+    suggestion_id: Optional[str] = None
     #: What to call the trip. Falls back to the destination.
     title: Optional[str] = Field(default=None, max_length=200)
     start_date: Optional[date_type] = None

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import logging
 from datetime import date as date_type, timedelta
 from typing import Optional
 from uuid import UUID
@@ -12,11 +11,8 @@ from sqlalchemy import or_, select
 import itinerary as planner
 import maps
 import recommend
-import itinerary as planner
-import recommend
 from DATABASE.ORM import (
     Account,
-    ActivityType,
     ActivityType,
     GroupMember,
     ItineraryItem,
@@ -36,8 +32,6 @@ from schemas import (
     TripOut,
     TripUpdate,
 )
-
-log = logging.getLogger(__name__)
 
 log = logging.getLogger(__name__)
 
@@ -210,18 +204,21 @@ def list_trips(
 @router.post("/trips", response_model=TripOut, status_code=status.HTTP_201_CREATED)
 def create_trip(
     payload: TripCreate,
+    background: BackgroundTasks,
     account: Account = Depends(current_account),
 ) -> TripOut:
-    """Create a trip and generate its day-by-day plan.
+    """Create a trip, and give it a plan.
 
-    The screen calls this "Generate itinerary" and reads `trip.itinerary`
-    straight back, so the plan is built here rather than in a second request -
-    a trip created empty and filled later renders as a blank timetable.
+    Two routes in. With `suggestion_id` the traveller has already chosen one of
+    the three options, so that plan is persisted directly - instant, and it is
+    the trip they were actually looking at. Without one, a plan has to be
+    composed, and that takes roughly thirty seconds against a browser that
+    abandons the request at twelve; so it happens after the response, and the
+    screen fills the itinerary in from GET /trips/{id}/itinerary.
 
-    Planning is best effort. If the recommender or the composer cannot produce
-    days - no taste vector yet, nothing in the corpus for that destination -
-    the trip is still created and returned with an empty itinerary, because
-    losing their trip as well helps nobody.
+    Planning is best effort either way. If nothing can be composed - no taste
+    vector yet, nothing in the corpus for that destination - the trip still
+    exists, because losing that as well helps nobody.
     """
     problem = payload.date_problem()
     if problem:
@@ -287,10 +284,42 @@ def create_trip(
         trip_id = trip.trip_id
         created = _trip_out(trip)
 
-    # Outside the transaction: planning is slow and paid, and holding a
-    # connection open across it would pin one for the duration.
-    created.itinerary = _generate_itinerary(trip_id, payload, account)
+    # The plan the traveller actually chose, if they came from the three
+    # options screen. Persisting what was on the card is both instant and
+    # correct; re-composing would spend another half-minute to produce a
+    # different trip from the one they picked.
+    from routers.drafts import recall_suggestion  # local: avoids a cycle
+
+    chosen = recall_suggestion(payload.suggestion_id)
+    if chosen is not None:
+        created.itinerary = _persist_chosen(trip_id, chosen, payload)
+        return created
+
+    # Otherwise it has to be composed, and that does not fit in a request. The
+    # browser abandons this call after twelve seconds while composition takes
+    # roughly thirty - which the screen showed as "Building your itinerary..."
+    # forever, because the work continued and nobody was left listening.
+    background.add_task(_generate_itinerary, trip_id, payload, account)
     return created
+
+
+def _persist_chosen(
+    trip_id: UUID,
+    chosen: dict,
+    payload: TripCreate,
+) -> list[PlannedItemOut]:
+    """Write the plan the traveller picked on the options screen.
+
+    No model call and no retrieval: every stop was already validated against
+    the pool when the suggestion was built, so this is a straight translation
+    from the card they were looking at into itinerary rows.
+    """
+    plan = chosen.get("plan")
+    if plan is None:
+        return []
+    written = _write_plan(trip_id, plan, chosen.get("by_ref") or {}, payload)
+    log.info("persisted chosen plan for trip %s: %d stop(s)", trip_id, len(written))
+    return written
 
 
 def _generate_itinerary(
@@ -333,14 +362,29 @@ def _generate_itinerary(
     if not result.plans:
         return []
 
-    by_id = {str(c.location_id): c for c in pool.candidates}
-    chosen = result.plans[0]
+    return _write_plan(trip_id, result.plans[0], result.by_ref or {}, payload)
+
+
+def _write_plan(
+    trip_id: UUID,
+    plan,
+    by_ref: dict,
+    payload: TripCreate,
+) -> list[PlannedItemOut]:
+    """Persist one composed plan as itinerary rows.
+
+    Shared by both routes into a trip - composing a new plan, and accepting the
+    one the traveller chose on the options screen - so the two cannot drift.
+    They already had: this looked up stops by `stop.location_id`, which stopped
+    existing when stops moved to integer `ref`s, and every trip created here has
+    silently produced nothing since.
+    """
     out: list[PlannedItemOut] = []
 
     with session_scope() as session:
-        for day in chosen.days:
+        for day in getattr(plan, "days", []) or []:
             for order, stop in enumerate(day.stops):
-                candidate = by_id.get(stop.location_id)
+                candidate = by_ref.get(getattr(stop, "ref", None))
                 if candidate is None:
                     continue
                 item = ItineraryItem(

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type
 from decimal import Decimal
@@ -40,6 +41,35 @@ router = APIRouter(prefix="/trips", tags=["drafts"])
 
 #: Enough to compose from without making the prompt enormous.
 POOL_TARGET = 60
+
+#: suggestion_id -> the plan behind that card, so choosing one does not throw
+#: it away. Without this, "Build this itinerary" re-plans from scratch: another
+#: half-minute of waiting, and a trip that may not be the trip on the card the
+#: traveller actually picked. Bounded and short-lived because it only has to
+#: survive the seconds between seeing three options and choosing one.
+_CHOSEN: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+CHOSEN_TTL = 1800.0
+CHOSEN_MAX = 300
+
+
+def remember_suggestion(suggestion_id: str, payload: dict[str, Any]) -> None:
+    """Keep a composed plan against its card id."""
+    _CHOSEN[suggestion_id] = {"at": time.monotonic(), **payload}
+    while len(_CHOSEN) > CHOSEN_MAX:
+        _CHOSEN.popitem(last=False)
+
+
+def recall_suggestion(suggestion_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """The plan behind a card, or None if it has aged out."""
+    if not suggestion_id:
+        return None
+    entry = _CHOSEN.get(suggestion_id)
+    if entry is None:
+        return None
+    if time.monotonic() - entry["at"] > CHOSEN_TTL:
+        _CHOSEN.pop(suggestion_id, None)
+        return None
+    return entry
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +509,17 @@ def trip_suggestions(
         )
         for plan, costed in zip(result.plans, costs)
     ]
+
+    # Keep each plan against the id its card carries, so choosing one can use
+    # the plan the traveller actually saw instead of composing a new one.
+    for card, plan, costed in zip(suggestions, result.plans, costs):
+        remember_suggestion(card["suggestion_id"], {
+            "plan": plan,
+            "costed": costed,
+            "by_ref": result.by_ref,
+            "country": country,
+            "days": days,
+        })
 
     mark("cost")
     log.info(

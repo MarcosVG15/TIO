@@ -110,6 +110,21 @@ LIVE_DOMAIN = "https://tio.agency/"
 #: code can reach.
 JS_PATCHES = [
     (
+        "assets/createLucideIcon-*.js",
+        # "Build this itinerary" is handed the id of the card the traveller
+        # chose and drops it: the POST /trips body is built from the form only.
+        # The server therefore cannot know which of the three plans was picked
+        # and has to compose a new one - half a minute of waiting for a trip
+        # that may not be the trip on the card. Forwarding the id lets the
+        # server persist the plan that was actually shown.
+        re.compile(
+            r"(async function \w+\(e\)\{let \w+=await \w+\(`/trips`,"
+            r"\{method:`POST`,body:\{)"
+        ),
+        r"\1suggestion_id:e.suggestionId,",
+        "send the chosen suggestion id when building a trip",
+    ),
+    (
         "assets/drafts-*.js",
         # Deleting a draft succeeds server-side (204) and the card stays on
         # screen, because the mutation's success handler is empty and nothing
