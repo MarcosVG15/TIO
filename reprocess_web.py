@@ -74,6 +74,21 @@ HEAD_TAGS = [
         "</style>"
     ),
     (
+        # Level the "Choose this option" buttons across the three suggestion
+        # cards. Each card is only as tall as its own itinerary, so a plan with
+        # fewer stops puts its button halfway up the row. Stretching the grid
+        # items and pushing the last child down costs nothing and needs no
+        # knowledge of the card's internals - which matters, because those
+        # class names are minified and change every build.
+        "tio-card-levelling",
+        "<style id=\"tio-card-levelling\">"
+        "[class*='grid-cols-']>*{align-self:stretch}"
+        "[class*='grid-cols-']>*>[class*='flex-col']{height:100%}"
+        "[class*='grid-cols-']>*>[class*='flex-col']>button:last-child,"
+        "[class*='grid-cols-']>*>[class*='flex-col']>a:last-child{margin-top:auto}"
+        "</style>"
+    ),
+    (
         "emrldco.com",
         '<script nowprocket data-noptimize="1" data-cfasync="false" '
         'data-wpfc-render="false" seraph-accel-crit="1" data-no-defer="1" '

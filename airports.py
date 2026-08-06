@@ -41,6 +41,37 @@ _IATA = re.compile(r"\A[A-Z]{3}\Z")
 #: should not be asked about again.
 _CACHE: dict[str, Optional[str]] = {}
 
+#: The cities people actually fly from and to, resolved without touching the
+#: database or a model. The corpus only knows an airport when OSM happened to
+#: tag an aerodrome inside that city's rows, which for somewhere like London is
+#: not reliable - and the request path that needs this cannot afford a model
+#: round trip, so a miss means no fares at all rather than slow fares. A short
+#: table of the obvious answers is worth more here than any amount of
+#: cleverness.
+_WELL_KNOWN: dict[str, str] = {
+    "london": "LON", "paris": "PAR", "madrid": "MAD", "barcelona": "BCN",
+    "rome": "ROM", "milan": "MIL", "venice": "VCE", "florence": "FLR",
+    "naples": "NAP", "lisbon": "LIS", "porto": "OPO", "amsterdam": "AMS",
+    "berlin": "BER", "munich": "MUC", "frankfurt": "FRA", "hamburg": "HAM",
+    "vienna": "VIE", "salzburg": "SZG", "innsbruck": "INN", "zurich": "ZRH",
+    "geneva": "GVA", "brussels": "BRU", "copenhagen": "CPH", "stockholm": "STO",
+    "oslo": "OSL", "helsinki": "HEL", "dublin": "DUB", "edinburgh": "EDI",
+    "manchester": "MAN", "prague": "PRG", "budapest": "BUD", "warsaw": "WAW",
+    "krakow": "KRK", "athens": "ATH", "istanbul": "IST", "seville": "SVQ",
+    "valencia": "VLC", "malaga": "AGP", "palma": "PMI", "ibiza": "IBZ",
+    "nice": "NCE", "lyon": "LYS", "marseille": "MRS", "toulouse": "TLS",
+    "bordeaux": "BOD", "ljubljana": "LJU", "zagreb": "ZAG", "split": "SPU",
+    "dubrovnik": "DBV", "bucharest": "BUH", "sofia": "SOF", "reykjavik": "REK",
+    "tokyo": "TYO", "kyoto": "OSA", "osaka": "OSA", "seoul": "SEL",
+    "bangkok": "BKK", "singapore": "SIN", "dubai": "DXB", "doha": "DOH",
+    "new york": "NYC", "los angeles": "LAX", "chicago": "CHI", "boston": "BOS",
+    "san francisco": "SFO", "miami": "MIA", "toronto": "YTO", "montreal": "YMQ",
+    "mexico city": "MEX", "rio de janeiro": "RIO", "sao paulo": "SAO",
+    "buenos aires": "BUE", "cape town": "CPT", "johannesburg": "JNB",
+    "cairo": "CAI", "marrakesh": "RAK", "casablanca": "CAS", "sydney": "SYD",
+    "melbourne": "MEL", "auckland": "AKL", "delhi": "DEL", "mumbai": "BOM",
+}
+
 
 class _Answer(BaseModel):
     #: Empty string when there is no commercial airport serving the city.
@@ -150,6 +181,13 @@ def iata_for_city(
     cache_key = f"{city.lower()}|{(country or '').lower()}"
     if cache_key in _CACHE:
         return _CACHE[cache_key]
+
+    # Before the database: it is free, it is correct, and it is the difference
+    # between a suggestion card showing a fare and showing nothing.
+    known = _WELL_KNOWN.get(city.casefold())
+    if known:
+        _CACHE[cache_key] = known
+        return known
 
     code = _from_corpus(city, country)
     if code is None and allow_model:

@@ -14,6 +14,7 @@ the plan, and the arithmetic happens in Python where it can be checked.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Optional
@@ -157,6 +158,52 @@ class Budget:
                 "price on the booking page."
             ),
         }
+
+
+#: TIO's planning fee, as a percentage of the trip, before complexity.
+#: Overridable so the commercial number is not a code change.
+_BASE_FEE_PERCENT = Decimal(os.getenv("PLANNING_FEE_PERCENT", "8"))
+
+#: More cities means more to arrange - more transfers to sequence, more nights
+#: to place, more ways for a day to go wrong. The fee follows that rather than
+#: being flat, because a nine-day four-city trip is not the same work as a
+#: long weekend in one place.
+_COMPLEXITY_MULTIPLIER: dict[int, Decimal] = {
+    1: Decimal("1.00"),
+    2: Decimal("1.25"),
+    3: Decimal("1.50"),
+}
+_MAX_MULTIPLIER = Decimal("1.75")
+
+
+def planning_fee(
+    trip_total: Decimal,
+    cities: int = 1,
+    days: int = 1,
+) -> dict[str, Any]:
+    """TIO's fee for a trip of this size and shape.
+
+    Returned as a block rather than a single number so a screen can show the
+    percentage it was derived from. A fee shown without its basis reads as
+    arbitrary, and this one is not: it is a percentage of the trip, scaled by
+    how many cities have to be strung together.
+
+    Charged on the trip total including estimates, because the work of
+    planning does not shrink just because we could not get a live hotel rate.
+    """
+    multiplier = _COMPLEXITY_MULTIPLIER.get(max(1, cities), _MAX_MULTIPLIER)
+    # A two-week trip is more work than a weekend even in one city.
+    if days >= 10:
+        multiplier += Decimal("0.15")
+
+    percent = (_BASE_FEE_PERCENT * multiplier).quantize(Decimal("0.1"))
+    fee = (trip_total * percent / Decimal("100")).quantize(Decimal("0.01"))
+    return {
+        "planning_fee_percent": float(percent),
+        "planning_fee": float(fee),
+        "total_with_fee": float((trip_total + fee).quantize(Decimal("0.01"))),
+        "complexity_multiplier": float(multiplier),
+    }
 
 
 def daily_allowance(budget_tier: Optional[str]) -> Decimal:

@@ -16,6 +16,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type
+from decimal import Decimal
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +25,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 
 import airports
+import budget as budget_model
 import embeddings
 import itinerary as planner
 import recommend
@@ -287,6 +289,13 @@ def _suggestion_out(
                 highlights.append(title)
 
     budget = costed.get("budget") or {}
+    # TIO's cut, derived here rather than invented by the model. Scaled by how
+    # many cities the plan strings together - see budget.planning_fee.
+    fee = budget_model.planning_fee(
+        Decimal(str(budget.get("total") or 0)),
+        cities=complexity,
+        days=len({d.get("day") for d in rows}) or 1,
+    )
     return {
         "suggestion_id": str(uuid.uuid4()),
         "name": getattr(plan, "title", "Option"),
@@ -301,6 +310,7 @@ def _suggestion_out(
         # here - see the note in the endpoint docstring.
         "estimated_cost": budget.get("total"),
         "currency": budget.get("currency", request.currency),
+        **fee,
         "highlights": highlights,
         "itinerary": rows,
         # Extra, ignored by the current screen but the honest part of the
