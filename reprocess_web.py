@@ -64,6 +64,80 @@ HEAD_TAGS = [
 PREVIEW_DOMAIN = "https://tio-journey-planner.lovable.app/"
 LIVE_DOMAIN = "https://tio.agency/"
 
+#: Image references worth chasing. The builder emits illustrations under its
+#: own CDN prefix and does not always include the files in the export - the
+#: bundle asks for /__l5e/assets-v1/<uuid>/tio-scene-swiss.jpeg, the file is
+#: not there, and the page renders alt text where a picture should be.
+_IMAGE_REF = re.compile(
+    r"""["'`(]((?:/__l5e|/assets|/a)/[^"'`()\s]*?\.(?:png|jpe?g|webp|svg|avif))"""
+)
+
+
+def _referenced_images() -> set[str]:
+    """Every same-origin image path the built site asks for."""
+    found: set[str] = set()
+    targets = ["index.html"]
+    if os.path.isdir("assets"):
+        targets += [
+            os.path.join("assets", name)
+            for name in os.listdir("assets")
+            if name.endswith((".js", ".css"))
+        ]
+    for path in targets:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as handle:
+                found.update(_IMAGE_REF.findall(handle.read()))
+        except OSError:
+            continue
+    return found
+
+
+def fetch_missing_images() -> int:
+    """Download images the export left behind, from the preview that still has them.
+
+    The preview site is the only place these files exist: they are not in the
+    repository, not in the drop-in, and not reproducible locally. Fetching them
+    is therefore not a workaround but the only way to have them at all - and it
+    has to happen after every build, because each build mints new uuids for new
+    illustrations.
+
+    Missing files are reported rather than skipped silently. A page rendering
+    alt text is the kind of fault that survives to production precisely because
+    nothing fails when it happens.
+    """
+    missing = sorted(
+        ref for ref in _referenced_images()
+        if not os.path.exists(ref.lstrip("/"))
+    )
+    if not missing:
+        return 0
+
+    try:
+        import httpx
+    except ImportError:
+        print(f"  {len(missing)} image(s) missing; install httpx to fetch them")
+        for ref in missing:
+            print(f"    missing  {ref}")
+        return len(missing)
+
+    failed = 0
+    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        for ref in missing:
+            local = ref.lstrip("/")
+            url = PREVIEW_DOMAIN.rstrip("/") + "/" + local
+            try:
+                response = client.get(url)
+                response.raise_for_status()
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                print(f"    FAILED   {ref}  ({type(exc).__name__})")
+                failed += 1
+                continue
+            os.makedirs(os.path.dirname(local) or ".", exist_ok=True)
+            with open(local, "wb") as handle:
+                handle.write(response.content)
+            print(f"  fetched   {ref}  ({len(response.content):,} bytes)")
+    return failed
+
 
 def main() -> int:
     os.chdir(WEB)
@@ -136,6 +210,13 @@ def main() -> int:
             except (UnicodeDecodeError, OSError):
                 pass
     print(f"\nremaining lovable.app references: {leftover}")
+
+    # After the domain rewrite, so a fetch is never attempted against a URL
+    # this script has just pointed at the live site.
+    still_missing = fetch_missing_images()
+    if still_missing:
+        print(f"\n{still_missing} image(s) could not be fetched - pages using "
+              "them will render alt text")
     return 0
 
 

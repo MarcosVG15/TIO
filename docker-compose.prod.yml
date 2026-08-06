@@ -65,17 +65,25 @@ services:
       db:
         condition: service_healthy
 
-  # Drains locations.vec. Not started by `up -d`: it belongs to the "embed"
-  # profile, so it runs only when asked for explicitly.
+  # DO NOT RUN THIS ON THE WEB SERVER.
   #
+  # Embedding the location corpus is GPU work. The server has limited CPU and
+  # has to stay responsive to requests; grinding 610k rows through a model on
+  # it starves everything that matters. The GPU box already runs this as part
+  # of its enrichment pipeline (describe -> images -> popularity -> embed
+  # sweep), and that sweep does the same job as this service - so running both
+  # duplicates the work and the slow one wins nothing.
+  #
+  # It is kept here because the box that should run it needs a definition, and
+  # this one only needs a database connection and an OLLAMA_URL: point those
+  # at the GPU machine and it drains the same queue safely, because claims use
+  # FOR UPDATE SKIP LOCKED and several workers never collide.
+  #
+  #   # on the GPU box only:
   #   docker compose -f docker-compose.prod.yml --profile embed up -d location-worker
-  #   docker compose -f docker-compose.prod.yml logs -f location-worker
   #   docker compose -f docker-compose.prod.yml stop location-worker
   #
-  # A profile rather than a one-off `run`, because this is a job measured in
-  # hours: a `docker compose run` dies with the SSH session that started it,
-  # and a detached one is unmanaged and unlogged. As a service it survives
-  # disconnects and reboots, and stops on command.
+  # The profile is what keeps `up -d` from ever starting it by accident.
   location-worker:
     build: .
     profiles: ["embed"]
