@@ -205,6 +205,10 @@ class Candidate:
     #: The individual signals, kept so a ranking can be explained rather than
     #: just asserted.
     taste_score: float = 0.0
+    #: True when `taste_score` was imputed because the place has no vector yet,
+    #: rather than measured against the travellers. Kept separate so an imputed
+    #: score is never reported as evidence of a match.
+    taste_imputed: bool = False
     popularity_prior: float = 0.0
     style_score: float = 0.0
     #: Filled by the LLM re-rank stage when it runs.
@@ -689,26 +693,58 @@ def score_candidates(
 
     group_score is the minimum across members - the fairness floor. final_score
     adds the popularity prior and the diet nudge, and is what ranking uses.
+
+    A place with no vector is scored, not rejected. This used to raise, which
+    forced every caller to filter on `vec IS NOT NULL` first - and while the
+    corpus is still being embedded that gate hid all but a fraction of a
+    percent of it, so cities as obvious as Paris had nothing to offer. An
+    unembedded place is one we know nothing about, which is not the same as one
+    we know to be a poor match, so its taste score is imputed as the mean of
+    everything here that could be measured. That keeps it mid-table on taste
+    and lets the popularity and style signals decide, instead of burying it.
+
+    This is deliberately not a hole in the space guard: a vector embedded by
+    the wrong model is still caught by `_assert_corpus_space`. Missing and
+    wrong are different failures and only the first one is survivable.
     """
     favourite_sets = {
         account_id: set(ids) for account_id, ids in (favourites or {}).items()
     }
 
+    # First pass: measure everything that can be measured, so the second pass
+    # has a real average to impute from.
+    measured: list[Candidate] = []
     for candidate in candidates:
-        if not candidate.vector:
-            raise ValueError(
-                f"{candidate.name} has no vector to score against; retrieval "
-                f"must populate Candidate.vector"
-            )
+        if not candidate.vector or not travellers:
+            continue
         candidate.scores = {
             traveller.account_id: embeddings.cosine(traveller.vector, candidate.vector)
             for traveller in travellers
         }
         candidate.group_score = min(candidate.scores.values())
+        candidate.taste_score = candidate.group_score
+        candidate.taste_imputed = False
+        measured.append(candidate)
+
+    # No measurable candidate at all means taste is simply unavailable. Zero
+    # for everyone is then a constant, which leaves the relative ordering to
+    # popularity and style rather than distorting it.
+    neutral = (
+        sum(c.taste_score for c in measured) / len(measured) if measured else 0.0
+    )
+
+    for candidate in candidates:
+        if not candidate.vector or not travellers:
+            candidate.taste_imputed = True
+            # Every member gets the same neutral figure, so the fairness ratio
+            # below evaluates to 1.0 and the place is neither rewarded nor
+            # punished for a gap in our data.
+            candidate.scores = {t.account_id: neutral for t in travellers}
+            candidate.group_score = neutral
+            candidate.taste_score = neutral
 
         # Three signals rather than one. See the weights above for why taste
         # does not dominate while embedding_text is templated.
-        candidate.taste_score = candidate.group_score
         candidate.popularity_prior = popularity_prior(candidate)
         candidate.style_score = style_affinity(candidate, travellers)
 
@@ -962,15 +998,25 @@ def top_destinations(
         return list(cached[1])
 
     conditions = [
-        Location.vec.is_not(None),
         Location.city.is_not(None),
         Location.category.not_in(EXCLUDED_CATEGORIES),
-        # Pageviews rather than the wider notability test. Cities are ranked by
-        # summed pageviews, so a row without them cannot change the answer -
-        # but including them makes this a 600k-row aggregate instead of a 250k
-        # one, and the extra seconds blow the browser's fetch timeout, which
-        # the user sees as "could not connect to the server".
-        Location.wikipedia_pageviews.is_not(None),
+        # Notability, not pageviews. Requiring pageviews here was measurably
+        # wrong while the corpus is still being enriched: of 8.26M rows only
+        # 6,152 had them and 4,729 had them *and* a vector, so the entire shelf
+        # was drawn from 0.06% of the database and Paris - 4,150 rows of it -
+        # offered nothing at all. A wikidata entity or a Wikipedia article is
+        # the same evidence of "somewhere you would go on purpose", and orders
+        # of magnitude more of the corpus carries it.
+        #
+        # The vector requirement is gone for the same reason. This function is
+        # deliberately not a vector search (see above); it only ever demanded
+        # one so that score_candidates would not raise downstream, and that is
+        # now handled where it belongs.
+        or_(
+            Location.wikidata_qid.is_not(None),
+            Location.wikipedia_title.is_not(None),
+            Location.picture.is_not(None),
+        ),
     ]
     if country:
         conditions.append(
@@ -998,7 +1044,12 @@ def top_destinations(
             .group_by(Location.city, Location.country)
             .having(func.count() >= floor)
             # Total attention the city commands, then sheer volume of things to
-            # do. Both are proxies for "somewhere people actually go".
+            # do. Both are proxies for "somewhere people actually go", and the
+            # order matters while enrichment is incomplete: with pageviews
+            # mostly absent the sum collapses to zero for every city and the
+            # count quietly takes over, which ranks by how many notable places
+            # a city has. That is a weaker signal but an honest one, and it
+            # recovers automatically as pageviews land.
             .order_by(func.sum(func.coalesce(Location.wikipedia_pageviews, 0)).desc(),
                       func.count().desc())
             .limit(limit)
