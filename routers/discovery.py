@@ -133,16 +133,10 @@ def recommended_destinations(
     the frontend can send them to finish onboarding instead of showing an empty
     shelf that looks like a bug.
     """
+    # Who we are planning for. Loaded first so a missing vector is a clean 409
+    # rather than a wasted aggregate over the whole corpus.
     try:
-        pool = recommend.build_pool(
-            country=country,
-            account_ids=[account.account_id],
-            # Wide: destinations are built by grouping, so each one needs
-            # enough places behind it to clear the sustains-a-trip floor.
-            target=400,
-            per_member_k=400,
-            notable_only=True,
-        )
+        travellers = recommend.load_travellers([account.account_id])
     except recommend.NoProfile as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -153,23 +147,32 @@ def recommended_destinations(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Recommendations are misconfigured on the server.",
         ) from exc
-    except recommend.EmptyPool:
-        return {"destinations": [], "cities": [], "notes": []}
 
-    grouped = recommend.group_destinations(pool.candidates, days=days)
+    # Candidates come from counting, not from nearest-neighbour: see
+    # recommend.top_destinations for why. Personalisation is the next stage.
+    grouped = recommend.top_destinations(country=country, days=days, limit=25)
     if not grouped:
-        # Every city fell below the floor. Better to say so than to offer a
-        # single-museum "destination" that cannot fill the days asked for.
         return {
             "destinations": [],
             "cities": [],
-            "notes": pool.notes
-            + [
+            "notes": [
                 f"No destination in the corpus has enough to fill {days} days yet."
             ],
         }
 
-    judged = rerank.score_destinations(grouped, pool.travellers)
+    # Cheap per-place signals, so the evidence inside each destination is
+    # ordered by fit rather than by raw fame alone.
+    for destination in grouped:
+        recommend.score_candidates(destination.places, travellers)
+        destination.places.sort(key=recommend.effective_score, reverse=True)
+        best = destination.places[: max(1, days * 2)]
+        destination.score = (
+            sum(recommend.effective_score(p) for p in best) / len(best) * 0.9
+            + min(len(destination.categories), 4) / 4.0 * 0.1
+        )
+    grouped.sort(key=lambda d: d.score, reverse=True)
+
+    judged = rerank.score_destinations(grouped, travellers)
     shelf = _one_per_country(judged, limit) if country is None else judged[:limit]
 
     return {
@@ -209,7 +212,7 @@ def recommended_destinations(
             {"city": d.city, "options": len(d.places), "score": round(d.score, 3)}
             for d in judged[:20]
         ],
-        "notes": pool.notes,
+        "notes": [],
     }
 
 
