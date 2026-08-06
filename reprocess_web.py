@@ -110,6 +110,15 @@ LIVE_DOMAIN = "https://tio.agency/"
 #: code can reach.
 JS_PATCHES = [
     (
+        "assets/plan-*.js",
+        # "Build this itinerary" describes what the server does; "Save this
+        # itinerary" describes what the traveller is doing. They have already
+        # chosen an option - the building happened when the options appeared.
+        re.compile(r"`Build this itinerary`"),
+        "`Save this itinerary`",
+        "rename the build button to Save",
+    ),
+    (
         "assets/createLucideIcon-*.js",
         # "Build this itinerary" is handed the id of the card the traveller
         # chose and drops it: the POST /trips body is built from the form only.
