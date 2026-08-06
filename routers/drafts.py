@@ -21,6 +21,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, select
+from sqlalchemy.exc import SQLAlchemyError
 
 import airports
 import embeddings
@@ -386,6 +387,19 @@ def trip_suggestions(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Nothing to suggest for {payload.destination} yet.",
+        ) from exc
+    except SQLAlchemyError as exc:
+        # Retrieval is bounded by a statement timeout, so this is the ordinary
+        # outcome when a filtered vector search cannot use the index - not an
+        # exceptional one. Left unhandled it surfaced as a 500, which tells the
+        # traveller nothing and tells us nothing either.
+        log.warning("suggestions retrieval failed for %s: %s", country, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Tio could not search {country} quickly enough just now. "
+                "Try a specific city, or try again in a moment."
+            ),
         ) from exc
 
     mark("pool")
