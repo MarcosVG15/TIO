@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import logging
 from datetime import date as date_type, timedelta
 from typing import Optional
 from uuid import UUID
@@ -11,8 +12,11 @@ from sqlalchemy import or_, select
 import itinerary as planner
 import maps
 import recommend
+import itinerary as planner
+import recommend
 from DATABASE.ORM import (
     Account,
+    ActivityType,
     ActivityType,
     GroupMember,
     ItineraryItem,
@@ -32,6 +36,8 @@ from schemas import (
     TripOut,
     TripUpdate,
 )
+
+log = logging.getLogger(__name__)
 
 log = logging.getLogger(__name__)
 
@@ -204,22 +210,18 @@ def list_trips(
 @router.post("/trips", response_model=TripOut, status_code=status.HTTP_201_CREATED)
 def create_trip(
     payload: TripCreate,
-    background: BackgroundTasks,
     account: Account = Depends(current_account),
 ) -> TripOut:
     """Create a trip and generate its day-by-day plan.
 
-    The trip is created and returned immediately; the plan is built afterwards.
+    The screen calls this "Generate itinerary" and reads `trip.itinerary`
+    straight back, so the plan is built here rather than in a second request -
+    a trip created empty and filled later renders as a blank timetable.
 
-    That split is forced by the frontend, which aborts every request after
-    twelve seconds. Composing three itineraries takes two LLM calls and rather
-    longer than that, so doing it inline produced "Could not connect to the
-    server. Your plan wasn't generated." - the work had in fact started, and
-    the browser simply stopped listening.
-
-    The screen already copes: when a trip response carries no itinerary it
-    fetches GET /trips/{id}/itinerary separately, which returns the plan once
-    it lands.
+    Planning is best effort. If the recommender or the composer cannot produce
+    days - no taste vector yet, nothing in the corpus for that destination -
+    the trip is still created and returned with an empty itinerary, because
+    losing their trip as well helps nobody.
     """
     problem = payload.date_problem()
     if problem:
@@ -285,9 +287,9 @@ def create_trip(
         trip_id = trip.trip_id
         created = _trip_out(trip)
 
-    # After the response, not before it. See the docstring: two LLM calls do
-    # not fit in the browser's twelve-second budget.
-    background.add_task(_generate_itinerary, trip_id, payload, account)
+    # Outside the transaction: planning is slow and paid, and holding a
+    # connection open across it would pin one for the duration.
+    created.itinerary = _generate_itinerary(trip_id, payload, account)
     return created
 
 
@@ -331,16 +333,14 @@ def _generate_itinerary(
     if not result.plans:
         return []
 
-    # Resolved through the mapping the composer actually showed the model,
-    # not by guessing at ids.
-    by_ref = result.by_ref or {}
+    by_id = {str(c.location_id): c for c in pool.candidates}
     chosen = result.plans[0]
     out: list[PlannedItemOut] = []
 
     with session_scope() as session:
         for day in chosen.days:
             for order, stop in enumerate(day.stops):
-                candidate = by_ref.get(stop.ref)
+                candidate = by_id.get(stop.location_id)
                 if candidate is None:
                     continue
                 item = ItineraryItem(
