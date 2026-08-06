@@ -42,7 +42,7 @@ from decimal import Decimal
 from typing import Any, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 
 import embeddings
 import proposals
@@ -953,11 +953,12 @@ def top_destinations(
         Location.vec.is_not(None),
         Location.city.is_not(None),
         Location.category.not_in(EXCLUDED_CATEGORIES),
-        or_(
-            Location.wikidata_qid.is_not(None),
-            Location.wikipedia_title.is_not(None),
-            Location.picture.is_not(None),
-        ),
+        # Pageviews rather than the wider notability test. Cities are ranked by
+        # summed pageviews, so a row without them cannot change the answer -
+        # but including them makes this a 600k-row aggregate instead of a 250k
+        # one, and the extra seconds blow the browser's fetch timeout, which
+        # the user sees as "could not connect to the server".
+        Location.wikipedia_pageviews.is_not(None),
     ]
     if country:
         conditions.append(
@@ -968,6 +969,10 @@ def top_destinations(
         )
 
     with session_scope() as session:
+        # Fail fast rather than hang. A slow aggregate that eventually returns
+        # is worse than a quick error: the browser has already given up, and
+        # the connection stays pinned behind it.
+        session.execute(text("SET LOCAL statement_timeout = '8s'"))
         rows = session.execute(
             select(
                 Location.city,

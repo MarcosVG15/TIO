@@ -254,14 +254,78 @@ class LocationOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class GroupChatRequest(BaseModel):
+    create: bool = False
+    name: Optional[str] = Field(default=None, max_length=150)
+
+
 class TripCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+    """What the trip builder posts.
+
+    Field names follow the frontend, not the ORM, because this is the contract
+    the screen already speaks: it sends `destination` and an optional `title`,
+    never `name`. Requiring `name` here made every "Generate itinerary" press
+    fail with a 422 the user could not read.
+    """
+
+    #: Where they want to go. Free text - "Kyoto, Japan", "Spain".
+    destination: str = Field(min_length=2, max_length=200)
+    #: What to call the trip. Falls back to the destination.
+    title: Optional[str] = Field(default=None, max_length=200)
+    start_date: Optional[date_type] = None
+    end_date: Optional[date_type] = None
+    #: Free text describing the trip, as typed to a friend.
+    prompt: Optional[str] = Field(default=None, max_length=2000)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    vibe: Optional[str] = Field(default=None, max_length=200)
+    travellers: Optional[int] = Field(default=None, ge=1, le=20)
+    #: Account ids travelling together.
+    companions: list[str] = Field(default_factory=list, max_length=20)
+    #: UI feature toggles, carried through untouched.
+    features: list[str] = Field(default_factory=list, max_length=30)
+    group_chat: Optional[GroupChatRequest] = None
+
+    # Kept for API callers that speak the ORM's language rather than the
+    # screen's. Neither is required.
     origin_location_id: Optional[str] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
     budget_limit: Optional[Decimal] = Field(default=None, ge=0)
-    is_group: bool = False
     group_id: Optional[str] = None
+
+    @property
+    def trip_name(self) -> str:
+        return (self.title or self.destination).strip()[:200]
+
+    def date_problem(self) -> Optional[str]:
+        """Why these dates cannot describe a trip being planned, or None.
+
+        Stricter than the trip *record* needs to be: this endpoint plans a
+        trip, and you cannot plan one into the past. Written as a sentence
+        because the screen shows `detail` verbatim.
+        """
+        today = date_type.today()
+
+        if self.end_date and not self.start_date:
+            return "Pick a start date as well as an end date."
+        if self.start_date and self.start_date < today:
+            return "That start date has already passed - you cannot plan a trip backwards."
+        if self.start_date and self.end_date:
+            if self.end_date < self.start_date:
+                return "That trip ends before it starts - check the dates."
+            span = (self.end_date - self.start_date).days + 1
+            if span > MAX_TRIP_DAYS:
+                return (
+                    f"That is a {span}-day trip. Tio plans up to "
+                    f"{MAX_TRIP_DAYS} days at a time."
+                )
+        if self.start_date and (self.start_date - today).days > MAX_DAYS_AHEAD:
+            return "That start date is more than two years away."
+        return None
+
+    @property
+    def days(self) -> Optional[int]:
+        if self.start_date and self.end_date and self.end_date >= self.start_date:
+            return (self.end_date - self.start_date).days + 1
+        return None
 
 
 class TripUpdate(BaseModel):
@@ -272,16 +336,38 @@ class TripUpdate(BaseModel):
     status: Optional[TripStatus] = None
 
 
+class PlannedItemOut(BaseModel):
+    """One row of a generated day-by-day plan.
+
+    Shaped for the trip screen, which reads day / part_of_day / title rather
+    than the ORM's date / time / activity_type.
+    """
+
+    itinerary_id: str
+    day: int
+    part_of_day: str
+    time: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    completed: bool = False
+    location: Optional[LocationOut] = None
+
+
 class TripOut(BaseModel):
     trip_id: str
     name: str
     status: TripStatus
     is_group: bool
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
+    start_date: Optional[date_type] = None
+    end_date: Optional[date_type] = None
     budget_limit: Optional[Decimal] = None
     origin_location: Optional[LocationOut] = None
     group_id: Optional[str] = None
+    #: Present on creation, when the plan was generated with the trip. The
+    #: screen reads `trip.itinerary` straight after posting.
+    itinerary: list[PlannedItemOut] = Field(default_factory=list)
+    #: Cheapest indicative fares found for the destination, if any.
+    flights: list["FlightSuggestionOut"] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

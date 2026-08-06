@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date as date_type, timedelta
 from typing import Optional
 from uuid import UUID
@@ -7,8 +8,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 
+import itinerary as planner
+import recommend
 from DATABASE.ORM import (
     Account,
+    ActivityType,
     GroupMember,
     ItineraryItem,
     Location,
@@ -18,16 +22,17 @@ from DATABASE.ORM import (
 )
 from deps import current_account, not_implemented
 from schemas import (
-    MAX_DAYS_AHEAD,
-    MAX_TRIP_DAYS,
     ItineraryItemCreate,
     ItineraryItemOut,
     ItineraryItemUpdate,
     LocationOut,
+    PlannedItemOut,
     TripCreate,
     TripOut,
     TripUpdate,
 )
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["trips"])
 
@@ -185,55 +190,37 @@ def create_trip(
     payload: TripCreate,
     account: Account = Depends(current_account),
 ) -> TripOut:
-    """Create a trip. Pass is_group=true with a group_id for a shared trip,
-    or leave both out for a solo one.
+    """Create a trip and generate its day-by-day plan.
+
+    The screen calls this "Generate itinerary" and reads `trip.itinerary`
+    straight back, so the plan is built here rather than in a second request -
+    a trip created empty and filled later renders as a blank timetable.
+
+    Planning is best effort. If the recommender or the composer cannot produce
+    days - no taste vector yet, nothing in the corpus for that destination -
+    the trip is still created and returned with an empty itinerary, because
+    losing their trip as well helps nobody.
     """
-    if payload.is_group and not payload.group_id:
-        # Mirrors the group_trip_needs_group CHECK constraint so the caller gets
-        # a readable message rather than an IntegrityError.
+    problem = payload.date_problem()
+    if problem:
+        # A plain string, not a Pydantic error object: the screen renders
+        # `detail` verbatim and shows nothing at all when it is a list, which
+        # is why an impossible date range used to fail silently.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="a group trip needs a group_id",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem
         )
-    # Date sanity. The CHECK constraint catches end < start at the database,
-    # but by then the message is an IntegrityError, and it says nothing about
-    # a trip that starts last year or runs for a decade.
-    today = date_type.today()
-    if payload.start_date and payload.end_date:
-        if payload.end_date < payload.start_date:
+
+    group_uuid: Optional[UUID] = None
+    if payload.group_id:
+        try:
+            group_uuid = UUID(payload.group_id)
+        except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="end_date is before start_date",
+                status_code=status.HTTP_404_NOT_FOUND, detail="group not found"
             )
-        span = (payload.end_date - payload.start_date).days + 1
-        if span > MAX_TRIP_DAYS:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"that is {span} days; trips are capped at {MAX_TRIP_DAYS}",
-            )
-    if payload.end_date and not payload.start_date:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="end_date given without start_date",
-        )
-    if payload.start_date and (payload.start_date - today).days > MAX_DAYS_AHEAD:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="start_date is more than two years away",
-        )
-    # A start date in the past is allowed on purpose - people record trips they
-    # have already taken. An *end* date in the past with a future start is not,
-    # and that is caught above.
 
     with session_scope() as session:
-        group_uuid: Optional[UUID] = None
-        if payload.group_id:
-            try:
-                group_uuid = UUID(payload.group_id)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="group not found"
-                )
+        if group_uuid is not None:
             # Membership is checked, not trusted: otherwise anyone could file a
             # trip into a group they do not belong to.
             member = session.scalar(
@@ -264,10 +251,10 @@ def create_trip(
 
         trip = Trip(
             owner_account_id=account.account_id,
-            name=payload.name.strip(),
+            name=payload.trip_name,
             origin_location_id=origin_uuid,
             group_id=group_uuid,
-            is_group=payload.is_group,
+            is_group=group_uuid is not None,
             start_date=payload.start_date,
             end_date=payload.end_date,
             budget_limit=payload.budget_limit,
@@ -275,7 +262,129 @@ def create_trip(
         )
         session.add(trip)
         session.flush()
-        return _trip_out(trip)
+        trip_id = trip.trip_id
+        created = _trip_out(trip)
+
+    # Outside the transaction: planning is slow and paid, and holding a
+    # connection open across it would pin one for the duration.
+    created.itinerary = _generate_itinerary(trip_id, payload, account)
+    return created
+
+
+def _generate_itinerary(
+    trip_id: UUID,
+    payload: TripCreate,
+    account: Account,
+) -> list[PlannedItemOut]:
+    """Build and persist a plan for a freshly created trip.
+
+    Every failure path returns an empty list rather than raising: the trip
+    exists either way, and a plan that could not be built is something the user
+    can retry from, not a reason to lose the trip.
+    """
+    days = payload.days or 3
+    country, city = _split_destination(payload.destination)
+
+    try:
+        pool = recommend.build_pool(
+            country=country,
+            account_ids=[account.account_id],
+            target=45,
+            city=city,
+            include_proposals=True,
+            notable_only=True,
+        )
+    except Exception as exc:
+        log.info("no pool for %s: %s", payload.destination, exc)
+        return []
+
+    try:
+        result = planner.compose(
+            pool=pool,
+            days=days,
+            feedback=payload.prompt or payload.notes or payload.vibe,
+        )
+    except Exception as exc:
+        log.warning("could not compose a plan for %s: %s", payload.destination, exc)
+        return []
+
+    if not result.plans:
+        return []
+
+    by_id = {str(c.location_id): c for c in pool.candidates}
+    chosen = result.plans[0]
+    out: list[PlannedItemOut] = []
+
+    with session_scope() as session:
+        for day in chosen.days:
+            for order, stop in enumerate(day.stops):
+                candidate = by_id.get(stop.location_id)
+                if candidate is None:
+                    continue
+                item = ItineraryItem(
+                    trip_id=trip_id,
+                    location_id=candidate.location_id,
+                    date=(
+                        payload.start_date + timedelta(days=day.day - 1)
+                        if payload.start_date
+                        else None
+                    ),
+                    activity_type=_activity_type(candidate.category),
+                    description=stop.note,
+                    # day / part_of_day / title are what the screen reads, and
+                    # none is an ORM column - a plan is a different shape from a
+                    # booking. JSONB keeps them with the row rather than in a
+                    # parallel table.
+                    details={
+                        "kind": "planned",
+                        "day": day.day,
+                        "part_of_day": stop.part_of_day,
+                        "title": stop.title,
+                        "city": day.city,
+                        "order": order,
+                    },
+                )
+                session.add(item)
+                session.flush()
+                out.append(
+                    PlannedItemOut(
+                        itinerary_id=str(item.itinerary_id),
+                        day=day.day,
+                        part_of_day=stop.part_of_day,
+                        title=stop.title,
+                        description=stop.note,
+                        completed=False,
+                        location=LocationOut(
+                            location_id=str(candidate.location_id),
+                            name=candidate.name,
+                            country=candidate.country,
+                            city=candidate.city,
+                            latitude=candidate.latitude,
+                            longitude=candidate.longitude,
+                            picture=candidate.picture,
+                        ),
+                    )
+                )
+    return out
+
+
+def _split_destination(destination):
+    """Recover a country from the screen's single free-text box.
+
+    "Kyoto, Japan" gives ("Japan", "Kyoto"); "Spain" gives ("Spain", None).
+    Last comma-separated part is the country by convention.
+    """
+    parts = [p.strip() for p in destination.split(",") if p.strip()]
+    if len(parts) >= 2:
+        return parts[-1], parts[0]
+    return destination.strip(), None
+
+
+def _activity_type(category):
+    try:
+        return ActivityType(category)
+    except ValueError:
+        return ActivityType.OTHER
 
 
 @router.get("/trips/{trip_id}", response_model=TripOut)
