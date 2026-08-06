@@ -97,6 +97,17 @@ recognisably for them, and you should say whose taste a day leans on in that
 day's summary. Never let one member's taste run the whole trip, even if their
 scores are highest.
 
+GETTING THERE
+
+You may be given the cheapest recent fare to each candidate city. Where two
+cities suit the traveller similarly, prefer the cheaper one and say so in the
+tradeoffs. Never state a fare as a guaranteed price, and never invent one for a
+city you were not given.
+
+When fares are supplied, treat the first and last day as travel days: arrival
+eats a morning and departure eats an afternoon, so do not fill them as if the
+traveller were already there.
+
 HONESTY
 
 rationale: why this plan suits these specific travellers. Concrete, grounded in
@@ -130,6 +141,10 @@ travellers: {traveller_count}
 <constraints>
 {constraints}
 </constraints>
+
+<getting_there>
+{flights}
+</getting_there>
 
 <pool>
 {pool_json}
@@ -285,6 +300,7 @@ def _build_prompt(
     days: int,
     avoid: Sequence[UUID],
     feedback: Optional[str],
+    flights: str = "",
 ) -> str:
     avoid_set = set(avoid)
     usable = [c for c in pool.candidates if c.location_id not in avoid_set]
@@ -316,6 +332,7 @@ def _build_prompt(
             [_traveller_payload(t) for t in pool.travellers], indent=1
         ),
         constraints=_constraints_block(pool),
+        flights=flights or "No flight information was checked.",
         pool_json=json.dumps(
             [_candidate_payload(c, pool.travellers) for c in shown], indent=1
         ),
@@ -384,6 +401,7 @@ def compose(
     avoid: Sequence[UUID] = (),
     feedback: Optional[str] = None,
     temperature: float = 0.7,
+    flights: str = "",
 ) -> PlanningResult:
     """Three plans for one pool.
 
@@ -395,7 +413,7 @@ def compose(
     if days < 1:
         raise ValueError("a trip needs at least one day")
 
-    prompt = _build_prompt(pool, days, avoid, feedback)
+    prompt = _build_prompt(pool, days, avoid, feedback, flights)
 
     try:
         completion = _get_client().chat.completions.parse(

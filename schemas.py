@@ -367,6 +367,10 @@ class SuggestRequest(BaseModel):
     avoid_location_ids: list[str] = Field(default_factory=list, max_length=400)
     #: Free text from the traveller, e.g. "too many churches".
     feedback: Optional[str] = Field(default=None, max_length=500)
+    #: Where they are flying from - an IATA code or a city name. Falls back to
+    #: the home city on their profile. Without one, and without dates, no fares
+    #: are checked and the plans come back without flights.
+    origin: Optional[str] = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
     def _derive_days(self) -> "SuggestRequest":
@@ -449,11 +453,31 @@ class TripPlanOut(BaseModel):
     days: list[PlannedDayOut]
 
 
+class FlightSuggestionOut(BaseModel):
+    """Cheapest indicative return fare to one of the plan's cities."""
+
+    city: str
+    destination: str
+    origin: str
+    depart_date: date_type
+    return_date: Optional[date_type] = None
+    price: Decimal
+    currency: str
+    airline: Optional[str] = None
+    stops: Optional[int] = None
+    booking_url: str
+
+
 class SuggestResponse(BaseModel):
     country: str
     days: int
     travellers: list[str]
     plans: list[TripPlanOut]
+    #: One per candidate city that could be priced, cheapest first. Empty when
+    #: no origin or dates were given, or the provider had nothing cached.
+    flights: list[FlightSuggestionOut] = Field(default_factory=list)
+    #: Shown next to any price. Never omitted when flights are present.
+    flight_disclaimer: Optional[str] = None
     #: Caveats the UI must show - accessibility filtering, unverifiable diets.
     notes: list[str] = Field(default_factory=list)
     #: Every location the plans drew on, so "regenerate" can exclude them.

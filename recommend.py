@@ -155,6 +155,10 @@ class Traveller:
     budget_tier: Optional[str] = None
     travel_pace: Optional[str] = None
     travel_styles: tuple[str, ...] = ()
+    #: Where they fly from when no origin is given. Collected at onboarding
+    #: precisely so a plan does not have to ask again.
+    home_city: Optional[str] = None
+    home_country: Optional[str] = None
 
     @property
     def needs_step_free(self) -> bool:
@@ -283,6 +287,8 @@ def _traveller_from_rows(account: Account, personality: Personality) -> Travelle
         budget_tier=personality.budget_tier,
         travel_pace=personality.travel_pace,
         travel_styles=tuple(personality.travel_styles or ()),
+        home_city=personality.home_city,
+        home_country=personality.home_country,
     )
 
 

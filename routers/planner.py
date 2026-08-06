@@ -20,9 +20,11 @@ from sqlalchemy import select
 import embeddings
 import itinerary as planner
 import recommend
+import trip_flights
 from DATABASE.ORM import Account, GroupMember, session_scope
 from deps import current_account
 from schemas import (
+    FlightSuggestionOut,
     LocationOut,
     PlannedDayOut,
     PlannedStopOut,
@@ -163,6 +165,29 @@ def suggest(
             detail=f"Nothing to suggest in {payload.country} yet.",
         ) from exc
 
+    # Fares for the cities this plan might use, so the composer can weigh the
+    # cost of getting there rather than pretending every city is equidistant.
+    # Everything here is optional: no origin, no dates, no token, no route and
+    # the plans are simply built without flights.
+    fares: list[trip_flights.CityFare] = []
+    origin = None
+    if payload.start_date:
+        home = next(
+            (t for t in pool.travellers if t.account_id == account.account_id), None
+        )
+        origin = trip_flights.origin_code(
+            payload.origin, home.home_city if home else None
+        )
+        if origin:
+            cities = [(city, pool.country) for city, _, _ in pool.cities[:6]]
+            fares = trip_flights.fares_for_cities(
+                origin=origin,
+                cities=cities,
+                depart=payload.start_date,
+                ret=payload.end_date,
+                adults=max(1, len(pool.travellers)),
+            )
+
     by_id = {str(c.location_id): c for c in pool.candidates}
 
     try:
@@ -171,6 +196,7 @@ def suggest(
             days=payload.days,
             avoid=_parse_avoid(payload.avoid_location_ids),
             feedback=payload.feedback,
+            flights=trip_flights.prompt_block(fares, origin),
         )
     except planner.PlanningError as exc:
         raise HTTPException(
@@ -218,6 +244,29 @@ def suggest(
         travellers=names,
         plans=plans,
         notes=pool.notes,
+        flights=[
+            FlightSuggestionOut(
+                city=fare.city,
+                destination=fare.destination_iata,
+                origin=fare.offer.origin,
+                depart_date=fare.offer.depart_date,
+                return_date=fare.offer.return_date,
+                price=fare.offer.price,
+                currency=fare.offer.currency,
+                airline=fare.offer.airline,
+                stops=fare.offer.stops,
+                booking_url=fare.offer.booking_url,
+            )
+            for fare in fares
+        ],
+        # Never omitted when there are prices - these come from a cache of what
+        # other people were quoted, not from a live quote.
+        flight_disclaimer=(
+            "Prices come from recent searches by other travellers and are "
+            "indicative, not a quote. The airline or agent reprices at checkout."
+            if fares
+            else None
+        ),
         # Everything the planner could have used, not just what it chose, so a
         # regenerate actually explores new ground.
         considered_location_ids=list(by_id),
