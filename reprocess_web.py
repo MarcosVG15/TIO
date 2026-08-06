@@ -89,6 +89,56 @@ HEAD_TAGS = [
 PREVIEW_DOMAIN = "https://tio-journey-planner.lovable.app/"
 LIVE_DOMAIN = "https://tio.agency/"
 
+#: Behavioural fixes applied to the built bundle: (file glob, pattern, repl,
+#: description). Only for things the server genuinely cannot fix - a bug in
+#: what the page does after a successful API call is not something a status
+#: code can reach.
+JS_PATCHES = [
+    (
+        "assets/drafts-*.js",
+        # Deleting a draft succeeds server-side (204) and the card stays on
+        # screen, because the mutation's success handler is empty and nothing
+        # refetches the list. The user has to reload to see their own delete.
+        # Matched by shape rather than by identifier: the minifier renames
+        # everything on every build.
+        re.compile(r"(mutationFn:\(\)=>\w+\(\w+\.id\),onSuccess:\(\)=>)\{\}"),
+        r"\1{window.location.reload()}",
+        "refresh the drafts list after a delete",
+    ),
+]
+
+
+def apply_js_patches() -> int:
+    """Re-apply behavioural fixes to the rebuilt bundle.
+
+    Idempotent: each pattern only matches the unpatched form, so running twice
+    changes nothing the second time. A pattern that stops matching is reported
+    rather than passed over - it means the builder changed that code and the
+    fix needs revisiting, which is exactly the kind of thing that otherwise
+    goes unnoticed until a user complains.
+    """
+    applied = 0
+    for pattern_glob, pattern, replacement, description in JS_PATCHES:
+        targets = glob.glob(pattern_glob)
+        if not targets:
+            print(f"  no file matches {pattern_glob} - skipped: {description}")
+            continue
+        for path in targets:
+            with open(path, encoding="utf-8", errors="ignore") as handle:
+                source = handle.read()
+            patched, count = pattern.subn(replacement, source)
+            if not count:
+                if replacement.split("{", 1)[-1][:20] in source:
+                    print(f"  already patched  {os.path.basename(path)}  {description}")
+                else:
+                    print(f"  PATTERN MISSED   {os.path.basename(path)}  {description}")
+                continue
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                handle.write(patched)
+            print(f"  patched ({count})    {os.path.basename(path)}  {description}")
+            applied += count
+    return applied
+
 #: Image references worth chasing. The builder emits illustrations under its
 #: own CDN prefix and does not always include the files in the export - the
 #: bundle asks for /__l5e/assets-v1/<uuid>/tio-scene-swiss.jpeg, the file is
@@ -235,6 +285,8 @@ def main() -> int:
             except (UnicodeDecodeError, OSError):
                 pass
     print(f"\nremaining lovable.app references: {leftover}")
+
+    apply_js_patches()
 
     # After the domain rewrite, so a fetch is never attempted against a URL
     # this script has just pointed at the live site.

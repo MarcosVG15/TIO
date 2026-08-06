@@ -310,6 +310,20 @@ def trip_suggestions(
     marks: list[tuple[str, float]] = []
     began = time.monotonic()
 
+    # Logged on the way in, not only on the way out. Starlette cancels the
+    # handler when the client disconnects, so a request the browser abandons
+    # at twelve seconds produces no completion line and no access log at all -
+    # which reads as "the request never arrived" when in fact it arrived and
+    # ran too long. An entry line makes a slow request distinguishable from a
+    # missing one.
+    log.info(
+        "suggestions requested: %s (%s to %s, %d traveller(s))",
+        payload.destination,
+        payload.start_date,
+        payload.end_date,
+        payload.travellers,
+    )
+
     def mark(label: str) -> None:
         marks.append((label, time.monotonic() - began))
 
