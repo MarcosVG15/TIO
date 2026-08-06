@@ -326,8 +326,23 @@ def trip_suggestions(
     them as optional, so they are simply absent until someone tells me what
     they should be.
     """
+    # Logged before the date check, not after it. With the log line below the
+    # check, a request rejected on its dates produced no entry at all - which
+    # is indistinguishable from one that never arrived, and sent me looking for
+    # a timeout twice.
+    log.info(
+        "suggestions requested: %r (%s to %s, %d traveller(s), budget %s %s)",
+        payload.destination,
+        payload.start_date,
+        payload.end_date,
+        payload.travellers,
+        payload.budget,
+        payload.currency,
+    )
+
     problem = payload.date_problem()
     if problem:
+        log.info("suggestions rejected: %s", problem)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem
         )
@@ -338,20 +353,6 @@ def trip_suggestions(
     # guessing.
     marks: list[tuple[str, float]] = []
     began = time.monotonic()
-
-    # Logged on the way in, not only on the way out. Starlette cancels the
-    # handler when the client disconnects, so a request the browser abandons
-    # at twelve seconds produces no completion line and no access log at all -
-    # which reads as "the request never arrived" when in fact it arrived and
-    # ran too long. An entry line makes a slow request distinguishable from a
-    # missing one.
-    log.info(
-        "suggestions requested: %s (%s to %s, %d traveller(s))",
-        payload.destination,
-        payload.start_date,
-        payload.end_date,
-        payload.travellers,
-    )
 
     def mark(label: str) -> None:
         marks.append((label, time.monotonic() - began))
