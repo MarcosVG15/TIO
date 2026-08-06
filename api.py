@@ -38,6 +38,32 @@ from routers import (
 )
 
 
+def _configure_logging() -> None:
+    """Make application logs actually appear.
+
+    Uvicorn installs handlers on its own loggers and leaves the root logger
+    alone, so it keeps Python's default level of WARNING. Every `log.info` in
+    this codebase was therefore discarded before it reached the container's
+    output - which is why a request could be logged on entry, rejected, and
+    logged again, and none of it showed up. Diagnosing anything from the
+    outside meant reading logs that were never written.
+
+    Set with LOG_LEVEL if a quieter or noisier deployment is wanted.
+    """
+    level = (os.getenv("LOG_LEVEL") or "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
+    )
+    # Uvicorn's access logger is separate and already configured; leaving it
+    # alone keeps request lines in their familiar shape.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+
+
+_configure_logging()
+
+
 def _dev_origins() -> list[str]:
     """Origins allowed to call the API cross-origin.
 
