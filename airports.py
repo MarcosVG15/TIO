@@ -114,8 +114,19 @@ def _from_model(city: str, country: Optional[str]) -> Optional[str]:
         return None
 
 
-def iata_for_city(city: str, country: Optional[str] = None) -> Optional[str]:
-    """The airport serving a city, or None if there is not one we can trust."""
+def iata_for_city(
+    city: str,
+    country: Optional[str] = None,
+    allow_model: bool = True,
+) -> Optional[str]:
+    """The airport serving a city, or None if there is not one we can trust.
+
+    `allow_model=False` restricts the answer to what the corpus already knows.
+    The model fallback is accurate but costs a round trip of a second or more,
+    and on a request the browser abandons after twelve seconds that is a bad
+    trade for a fare line: a suggestion card without a flight price is still a
+    good suggestion, whereas one that never arrives is nothing at all.
+    """
     city = (city or "").strip()
     if not city:
         return None
@@ -129,7 +140,13 @@ def iata_for_city(city: str, country: Optional[str] = None) -> Optional[str]:
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
-    code = _from_corpus(city, country) or _from_model(city, country)
+    code = _from_corpus(city, country)
+    if code is None and allow_model:
+        code = _from_model(city, country)
+    elif code is None:
+        # Not cached: a later call that is allowed to ask the model should
+        # still get the chance to.
+        return None
     _CACHE[cache_key] = code
     if code:
         log.info("resolved %s -> %s", city, code)

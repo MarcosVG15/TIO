@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 from uuid import UUID
@@ -409,6 +410,106 @@ def _get_client() -> OpenAI:
             raise PlanningError("OPENAI_API_KEY is not set")
         _client = OpenAI(api_key=key, max_retries=3)
     return _client
+
+
+#: One instruction per shape, for the parallel path. The wording mirrors the
+#: THREE DIFFERENT PLANS section of the prompt, because a plan built by a call
+#: that was told something slightly different is a plan that does not match the
+#: set it is shown in.
+_SHAPE_BRIEFS: dict[str, str] = {
+    "single_city": (
+        "one city (or metro area) in depth, everything within easy local "
+        "travel. The safest, most restful of the options."
+    ),
+    "multi_city": (
+        "two or three cities. Split the days between them and account for the "
+        "fact that a travel day is not a sightseeing day."
+    ),
+    "themed": (
+        "led by one strong idea drawn from the travellers' taste (food, "
+        "architecture, water, nightlife, quiet). One city or several. This one "
+        "is allowed to be the boldest."
+    ),
+}
+
+
+def _one_plan(prompt: str, shape: str, temperature: float) -> Optional[TripPlan]:
+    """Ask for a single plan of one shape. Returns None if that call fails."""
+    brief = _SHAPE_BRIEFS.get(shape, "")
+    instruction = (
+        f"{prompt}\n\nRETURN ONE PLAN ONLY\n\n"
+        f"Ignore the instruction above to return three. Return exactly one "
+        f"plan, with shape set to \"{shape}\": {brief}"
+    )
+    try:
+        completion = _get_client().chat.completions.parse(
+            model=MODEL_ID,
+            messages=[
+                {"role": "system", "content": ROLE},
+                {"role": "user", "content": instruction},
+            ],
+            response_format=TripPlan,
+            temperature=temperature,
+        )
+    except Exception as exc:  # noqa: BLE001 - one shape failing is survivable
+        log.warning("planner call for shape %s failed: %s", shape, exc)
+        return None
+    return completion.choices[0].message.parsed
+
+
+def compose_parallel(
+    pool: Pool,
+    days: int,
+    avoid: Sequence[UUID] = (),
+    feedback: Optional[str] = None,
+    temperature: float = 0.7,
+    flights: str = "",
+    shapes: Sequence[str] = ("single_city", "multi_city", "themed"),
+) -> PlanningResult:
+    """The same three plans, as three concurrent calls instead of one.
+
+    Wall-clock is what forces this. One call producing three full itineraries
+    writes three times as many tokens as one producing a single itinerary, and
+    output tokens are almost all of the latency - so the single call lands
+    around twenty-five seconds while the browser abandons the request at
+    twelve. Three calls in parallel finish in roughly the time of the slowest
+    one.
+
+    It also degrades better. If one shape fails or comes back unusable the
+    other two are still real plans, whereas a single call failing leaves
+    nothing at all. Two good options beat an error page.
+    """
+    if days < 1:
+        raise ValueError("a trip needs at least one day")
+
+    prompt, shown = _build_prompt(pool, days, avoid, feedback, flights)
+
+    with ThreadPoolExecutor(max_workers=len(shapes)) as pool_exec:
+        results = list(
+            pool_exec.map(lambda s: _one_plan(prompt, s, temperature), shapes)
+        )
+
+    produced = [plan for plan in results if plan is not None]
+    if not produced:
+        raise PlanningError("every planner call failed")
+
+    plans, hallucinated, dropped = _validate(PlanSet(plans=produced), shown, days)
+
+    if hallucinated:
+        log.warning(
+            "planner invented %d location ref(s) for %s: %s",
+            len(hallucinated),
+            pool.country,
+            hallucinated[:5],
+        )
+
+    return PlanningResult(
+        plans=plans,
+        hallucinated=hallucinated,
+        dropped_stops=dropped,
+        model=MODEL_ID,
+        by_ref={index + 1: candidate for index, candidate in enumerate(shown)},
+    )
 
 
 def compose(

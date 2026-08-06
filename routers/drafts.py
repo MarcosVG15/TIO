@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type
 from typing import Any, Optional
 
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
+import airports
 import embeddings
 import itinerary as planner
 import recommend
@@ -319,7 +321,10 @@ def trip_suggestions(
             continue
 
     try:
-        result = planner.compose(
+        # Parallel, not the single call: this endpoint answers a button press
+        # that the browser abandons after twelve seconds, and one call writing
+        # three itineraries takes roughly twice that.
+        result = planner.compose_parallel(
             pool=pool,
             days=days,
             avoid=avoid,
@@ -335,13 +340,17 @@ def trip_suggestions(
     home = getattr(traveller, "home_city", None)
     origin = None
     if payload.start_date and home:
-        import trip_flights
+        # Corpus only. Resolving an airport through the model costs a round
+        # trip per city, and three plans plus an origin is four of them - more
+        # than the whole request is allowed to take.
+        origin = airports.iata_for_city(home, allow_model=False)
 
-        origin = trip_flights.origin_code(None, home)
-
-    suggestions = []
-    for plan in result.plans:
-        costed = trip_costing.cost_plan(
+    # Concurrently, because each plan's costing is a handful of network calls -
+    # fares, hotel rates - and doing three plans' worth in series took longer
+    # than composing them did. They share nothing, so there is nothing to
+    # serialise for.
+    def cost(plan):
+        return trip_costing.cost_plan(
             plan,
             start_date=payload.start_date,
             travellers=payload.travellers,
@@ -350,15 +359,23 @@ def trip_suggestions(
             country=country,
             by_ref=result.by_ref,
             currency=payload.currency,
+            resolve_iata=lambda city, country=None: airports.iata_for_city(
+                city, country, allow_model=False
+            ),
         )
-        suggestions.append(
-            _suggestion_out(
-                plan,
-                request=payload,
-                costed=costed,
-                pace=getattr(traveller, "travel_pace", None),
-            )
+
+    with ThreadPoolExecutor(max_workers=max(1, len(result.plans))) as workers:
+        costs = list(workers.map(cost, result.plans))
+
+    suggestions = [
+        _suggestion_out(
+            plan,
+            request=payload,
+            costed=costed,
+            pace=getattr(traveller, "travel_pace", None),
         )
+        for plan, costed in zip(result.plans, costs)
+    ]
 
     return {
         "suggestions": suggestions,
