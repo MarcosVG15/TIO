@@ -115,11 +115,20 @@ def recommended_destinations(
         description="Narrow to one country. Omitted searches the whole corpus.",
     ),
     limit: int = Query(default=6, ge=1, le=50),
+    days: int = Query(
+        default=4, ge=1, le=21,
+        description="Typical trip length. A destination must sustain it.",
+    ),
     account: Account = Depends(current_account),
 ):
-    """Locations ranked against the caller's personality vector.
+    """Destinations ranked against the caller's profile.
 
-    Places, not plans - use POST /planner/suggest for a day-by-day itinerary.
+    Cities, not buildings. A card offering one museum is not a holiday and
+    cannot be compared against another city on anything a traveller cares
+    about, so individual places become the *evidence* for a destination and the
+    destination is what is offered. `places` on each card is the raw material
+    for a route once one is chosen.
+
     Returns 409 rather than an empty list when the caller has no vector yet, so
     the frontend can send them to finish onboarding instead of showing an empty
     shelf that looks like a bug.
@@ -128,19 +137,11 @@ def recommended_destinations(
         pool = recommend.build_pool(
             country=country,
             account_ids=[account.account_id],
-            # Retrieve well beyond the limit so there is a spread of countries
-            # to choose between. A straight top-6 off the index is whatever the
-            # corpus happens to hold most of - which is how six Austrian
-            # attractions end up being the entire shelf.
-            # Shortlist for the judge, not the final six.
-            target=rerank.MAX_CANDIDATES,
-            per_member_k=200,
-            # 91% of the corpus has no wikidata entity, no article and no
-            # photograph. Those are bus stops, not destinations.
+            # Wide: destinations are built by grouping, so each one needs
+            # enough places behind it to clear the sustains-a-trip floor.
+            target=400,
+            per_member_k=400,
             notable_only=True,
-            # No country named means "show me anywhere", and a shelf of six
-            # places in one country is not a choice.
-            one_per_country=country is None,
         )
     except recommend.NoProfile as exc:
         raise HTTPException(
@@ -155,47 +156,84 @@ def recommended_destinations(
     except recommend.EmptyPool:
         return {"destinations": [], "cities": [], "notes": []}
 
-    # Final stage: a model reads the shortlist and judges fit to this person,
-    # which the vector cannot do while embedding_text is templated. Falls back
-    # to the cheap ranking if it is unavailable.
-    judged = rerank.score_candidates(pool.candidates, pool.travellers)
+    grouped = recommend.group_destinations(pool.candidates, days=days)
+    if not grouped:
+        # Every city fell below the floor. Better to say so than to offer a
+        # single-museum "destination" that cannot fill the days asked for.
+        return {
+            "destinations": [],
+            "cities": [],
+            "notes": pool.notes
+            + [
+                f"No destination in the corpus has enough to fill {days} days yet."
+            ],
+        }
 
-    shelf = (
-        recommend.pick_across_countries(judged, limit, per_country=1)
-        if country is None
-        else judged[:limit]
-    )
+    judged = rerank.score_destinations(grouped, pool.travellers)
+    shelf = _one_per_country(judged, limit) if country is None else judged[:limit]
 
     return {
-        # Field names match what the home screen reads, not what reads best in
-        # isolation. `tags` in particular must always be a list: the card calls
-        # .slice(0, 3) on it unconditionally, so a missing key is a TypeError
-        # that takes the whole page down rather than one empty card.
         "destinations": [
             {
-                "id": str(candidate.location_id),
-                "name": candidate.name,
-                "country": candidate.country or candidate.city or "",
-                "matchScore": _match_percent(candidate, account.account_id),
-                "imageUrl": candidate.picture,
-                "tags": _tags(candidate),
-                "reason": _reason(candidate),
-                # Kept for callers that want the underlying numbers.
-                "location_id": str(candidate.location_id),
-                "city": candidate.city or candidate.region,
-                "category": candidate.category,
-                "latitude": candidate.latitude,
-                "longitude": candidate.longitude,
-                "score": round(candidate.final_score, 3),
+                "id": f"{d.city}|{d.country}",
+                "name": d.city,
+                "country": d.country,
+                "matchScore": max(0, min(100, int(
+                    d.llm_score if d.llm_score is not None else round(d.score * 100)
+                ))),
+                "imageUrl": d.picture,
+                # Always a list: the card calls .slice(0, 3) unconditionally.
+                "tags": [c.replace("_", " ") for c in d.categories[:4]],
+                "reason": d.llm_reason or (
+                    f"{len(d.places)} places worth your time, enough for "
+                    f"{days} days."
+                ),
+                # The raw material for a route through this destination.
+                "places": [
+                    {
+                        "location_id": str(p.location_id),
+                        "name": p.name,
+                        "category": p.category,
+                        "latitude": p.latitude,
+                        "longitude": p.longitude,
+                    }
+                    for p in d.places[: max(6, days * 3)]
+                ],
+                "placeCount": len(d.places),
+                "city": d.city,
+                "score": round(d.score, 3),
             }
-            for candidate in shelf
+            for d in shelf
         ],
         "cities": [
-            {"city": city, "options": count, "score": round(score, 3)}
-            for city, count, score in pool.cities
+            {"city": d.city, "options": len(d.places), "score": round(d.score, 3)}
+            for d in judged[:20]
         ],
         "notes": pool.notes,
     }
+
+
+def _one_per_country(destinations, limit: int):
+    """At most one destination per country, best first.
+
+    Six cities in one country is not a choice of where to go.
+    """
+    chosen, seen = [], set()
+    for destination in destinations:
+        key = (destination.country or "?").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        chosen.append(destination)
+        if len(chosen) >= limit:
+            break
+    if len(chosen) < limit:
+        for destination in destinations:
+            if destination not in chosen:
+                chosen.append(destination)
+                if len(chosen) >= limit:
+                    break
+    return chosen
 
 
 @router.get("/search")

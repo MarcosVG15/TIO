@@ -104,6 +104,16 @@ def suggest(
     `considered_location_ids`) to regenerate without repeating yourself, and
     `feedback` to say what was wrong with the last set.
     """
+    # Dates first, and as a plain sentence. A Pydantic validator would return
+    # `detail` as a list of error objects, which the frontend cannot render -
+    # the user would see nothing at all rather than a red line telling them
+    # what is wrong.
+    problem = payload.date_problem()
+    if problem:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem
+        )
+
     account_ids = _resolve_travellers(payload.group_id, account)
 
     # A city has to be in the country the caller named. Checked against the
@@ -127,6 +137,11 @@ def suggest(
             account_ids=account_ids,
             target=POOL_TARGET,
             city=payload.city,
+            # Two candidate sources. Vector search knows the corpus; a model
+            # knows which places people have heard of. The planner needs both,
+            # because a plan full of obscure rows is the failure users notice.
+            include_proposals=True,
+            notable_only=True,
         )
     except recommend.NoProfile as exc:
         # 409, not 404: the account exists, it is just not ready to be planned

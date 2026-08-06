@@ -45,6 +45,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 
 import embeddings
+import proposals
 from DATABASE.ORM import (
     Account,
     ActivityType,
@@ -235,6 +236,10 @@ class Pool:
     considered: int = 0
     dropped_for_access: int = 0
     notes: list[str] = field(default_factory=list)
+    #: How many model-proposed names resolved to real rows, when that source
+    #: ran. A falling hit rate means the corpus has a gap or the model drifted.
+    proposal_hit_rate: Optional[float] = None
+    proposals_used: int = 0
 
     @property
     def is_group(self) -> bool:
@@ -877,6 +882,96 @@ def pick_across_countries(
     return sorted(chosen, key=effective_score, reverse=True)
 
 
+@dataclass
+class Destination:
+    """A place you would book a trip to, rather than a single building.
+
+    "Pick the place" means picking a city, not a museum: a card offering the
+    Kunsthistorisches Museum is not a holiday, and cannot be compared against
+    another city on any axis a traveller cares about. Individual places become
+    the evidence for a destination rather than the recommendation itself.
+    """
+
+    city: str
+    country: str
+    #: The places that argue for it, best first. Also what a route is built
+    #: from once the traveller picks this destination.
+    places: list[Candidate] = field(default_factory=list)
+    score: float = 0.0
+    llm_score: Optional[int] = None
+    llm_reason: Optional[str] = None
+
+    @property
+    def picture(self) -> Optional[str]:
+        for place in self.places:
+            if place.picture:
+                return place.picture
+        return None
+
+    @property
+    def categories(self) -> list[str]:
+        """Distinct categories present, commonest first - what there is to do."""
+        counts: dict[str, int] = {}
+        for place in self.places:
+            counts[place.category] = counts.get(place.category, 0) + 1
+        return [c for c, _ in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+    @property
+    def label(self) -> str:
+        return f"{self.city}, {self.country}" if self.country else self.city
+
+
+def group_destinations(
+    candidates: Sequence[Candidate],
+    days: int = 4,
+    min_places: Optional[int] = None,
+) -> list[Destination]:
+    """Roll scored places up into destinations worth a trip.
+
+    A destination has to sustain the traveller's usual holiday, so somewhere
+    with one excellent museum and nothing else is not offered - it would be a
+    good afternoon and a bad week. `min_places` defaults to roughly two things
+    a day, which is a slow pace and therefore a conservative floor.
+
+    Scored on the mean of its best `days * 2` places rather than all of them:
+    a city with four superb sights and two hundred bus shelters should not be
+    dragged down by the shelters, and a city with one superb sight should not
+    be lifted by it alone.
+    """
+    floor = min_places if min_places is not None else max(3, days * 2)
+
+    grouped: dict[tuple[str, str], Destination] = {}
+    for candidate in candidates:
+        city = (candidate.city or candidate.region or "").strip()
+        if not city:
+            continue
+        key = (city.lower(), (candidate.country or "").lower())
+        destination = grouped.get(key)
+        if destination is None:
+            destination = Destination(city=city, country=candidate.country or "")
+            grouped[key] = destination
+        destination.places.append(candidate)
+
+    out: list[Destination] = []
+    for destination in grouped.values():
+        destination.places.sort(key=effective_score, reverse=True)
+        if len(destination.places) < floor:
+            continue
+
+        best = destination.places[: max(1, days * 2)]
+        mean = sum(effective_score(p) for p in best) / len(best)
+
+        # Somewhere with several kinds of thing to do sustains a trip better
+        # than somewhere with six of the same. Small, so it breaks ties rather
+        # than overturning quality.
+        variety = min(len(destination.categories), 4) / 4.0
+        destination.score = mean * 0.9 + variety * 0.1
+        out.append(destination)
+
+    out.sort(key=lambda d: d.score, reverse=True)
+    return out
+
+
 def rank_cities(candidates: Sequence[Candidate]) -> list[tuple[str, int, float]]:
     """(city, candidate count, mean final score), best first.
 
@@ -915,6 +1010,7 @@ def build_pool(
     city: Optional[str] = None,
     one_per_country: bool = False,
     notable_only: bool = False,
+    include_proposals: bool = False,
 ) -> Pool:
     """Everything above, in order, for one country and one set of travellers.
 
@@ -927,6 +1023,32 @@ def build_pool(
     candidates, favourites, examined = retrieve(
         country, travellers, per_member_k, city, notable_only
     )
+
+    # Second source, unioned rather than substituted. Vector search knows what
+    # is in the database; a model knows which places people have actually heard
+    # of. While embedding_text is templated the first is nearly blind, and this
+    # is what puts the Alcazar in a Seville plan instead of the nearest bench.
+    grounding = None
+    if include_proposals and country:
+        reference = travellers[0]
+        named = proposals.propose(
+            country=country,
+            city=city,
+            profile=reference.paragraph,
+            styles=reference.travel_styles,
+        )
+        grounded, grounding = proposals.resolve(named, country, city)
+        known = {c.location_id for c in candidates}
+        for row in grounded:
+            if row.location_id in known:
+                # Already retrieved; keep the vector path's copy rather than
+                # duplicating, but remember the model vouched for it.
+                continue
+            candidate = _to_candidate(row)
+            candidate.reason = "proposed"
+            candidate.llm_reason = grounding.matched.get(str(row.location_id)) or None
+            candidates.append(candidate)
+            examined += 1
 
     if not candidates:
         raise EmptyPool(
@@ -967,6 +1089,8 @@ def build_pool(
         country=country,
         travellers=list(travellers),
         candidates=selected,
+        proposal_hit_rate=grounding.hit_rate if grounding else None,
+        proposals_used=sum(1 for c in selected if c.reason == "proposed"),
         cities=rank_cities(selected),
         considered=examined,
         notes=notes,

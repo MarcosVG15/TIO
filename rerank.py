@@ -143,6 +143,106 @@ def _place_line(candidate: Candidate) -> str:
     return " | ".join(bits)
 
 
+DESTINATION_ROLE = """You judge how well whole destinations suit a traveller.
+
+You are given one traveller and a list of candidate destinations - cities, with
+a sample of what there is to do in each. For each, return a compatibility score
+from 0 to 100 and one short reason.
+
+You are judging a TRIP, not a building. Ask whether this person would enjoy
+several days here: does the mix of things to do suit them, is the pace right,
+would they run out of things they care about.
+
+SCORING
+
+Use the whole range; a list where everything scores 70-80 is useless. Anchor:
+
+  85-100  they would love several days here
+  60-84   a good trip for them
+  35-59   fine, but not built for this person
+  0-34    wrong sort of place for them entirely
+
+Judge fit, not fame. A famous party island is a poor destination for someone
+who wants quiet mornings, however well known it is.
+
+REASONS
+
+One sentence, under 120 characters, addressed to the traveller as "you". About
+the destination as a trip - the character of the place and why their days there
+would be good ones. Not a list of sights, and never generic praise.
+
+Good: "Walkable, quiet in the mornings, and enough galleries to fill three days
+without rushing."
+Bad: "A beautiful city with many attractions."
+
+Return exactly one entry per destination, using the id given."""
+
+
+def score_destinations(destinations, travellers: Sequence[Traveller]):
+    """Attach llm_score and llm_reason to destinations, ordered best first.
+
+    Same contract as `score_candidates`: on any failure the input order is
+    returned untouched, because a shelf ranked by the cheap signals beats an
+    error page.
+    """
+    shortlist = list(destinations)[:MAX_CANDIDATES]
+    if not shortlist:
+        return []
+
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        return shortlist
+
+    lines = []
+    for index, destination in enumerate(shortlist):
+        sample = ", ".join(p.name for p in destination.places[:6])
+        lines.append(
+            f"{index} | {destination.label} | "
+            f"{len(destination.places)} places | "
+            f"{', '.join(destination.categories[:4])} | {sample}"
+        )
+
+    prompt = (
+        f"<traveller>\n{_traveller_block(travellers)}\n</traveller>\n\n"
+        f"<destinations>\n" + "\n".join(lines) + "\n</destinations>\n\n"
+        f"Score all {len(shortlist)} destinations."
+    )
+
+    try:
+        completion = OpenAI(api_key=key, max_retries=2).chat.completions.parse(
+            model=MODEL_ID,
+            messages=[
+                {"role": "system", "content": DESTINATION_ROLE},
+                {"role": "user", "content": prompt},
+            ],
+            response_format=Judgements,
+            temperature=0.3,
+        )
+        parsed = completion.choices[0].message.parsed
+    except Exception as exc:
+        log.warning("destination re-rank failed, using cheap ranking: %s", exc)
+        return shortlist
+
+    if parsed is None:
+        return shortlist
+
+    for place in parsed.places:
+        try:
+            index = int(place.location_id)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(shortlist):
+            shortlist[index].llm_score = place.score
+            shortlist[index].llm_reason = place.reason.strip() or None
+
+    for destination in shortlist:
+        if destination.llm_score is None:
+            destination.llm_score = max(0, min(100, round(destination.score * 100)))
+
+    shortlist.sort(key=lambda d: (d.llm_score or 0, d.score), reverse=True)
+    return shortlist
+
+
 def score_candidates(
     candidates: Sequence[Candidate],
     travellers: Sequence[Traveller],

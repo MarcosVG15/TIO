@@ -356,7 +356,9 @@ class SuggestRequest(BaseModel):
     #: against the corpus in the router, since only the database knows.
     city: Optional[str] = Field(default=None, max_length=150)
     #: Either give `days`, or give both dates and let the length be derived.
-    days: Optional[int] = Field(default=None, ge=1, le=MAX_TRIP_DAYS)
+    #: Bounds are checked in date_problem(), not here: a Field constraint
+    #: fails with a Pydantic error object the frontend cannot render.
+    days: Optional[int] = None
     start_date: Optional[date_type] = None
     end_date: Optional[date_type] = None
     #: Plan for a group instead of just the caller. The caller must be a member.
@@ -367,45 +369,56 @@ class SuggestRequest(BaseModel):
     feedback: Optional[str] = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
-    def _dates_make_sense(self) -> "SuggestRequest":
-        """Reject date combinations that cannot describe a real trip.
+    def _derive_days(self) -> "SuggestRequest":
+        """Fill `days` from the dates. Deliberately does not reject anything.
 
-        Done here rather than in the router so the rules are part of the
-        published schema, and so an impossible request never reaches the
-        planner - an LLM asked to fill "-3 days" will invent something rather
-        than refuse.
+        Raising here produces a Pydantic error object - `detail` becomes a list
+        of {type, loc, msg, ...} - and the frontend can only render `detail`
+        when it is a plain string, so the user sees nothing. Every rejection
+        therefore happens in the router, where the message is a sentence.
+        """
+        if self.start_date and self.end_date and self.end_date >= self.start_date:
+            object.__setattr__(
+                self, "days", (self.end_date - self.start_date).days + 1
+            )
+        return self
+
+    def date_problem(self) -> Optional[str]:
+        """The reason these dates cannot describe a real trip, or None.
+
+        Written to be shown to a person, because it will be.
         """
         today = date_type.today()
 
+        if self.end_date and not self.start_date:
+            return "Pick a start date as well as an end date."
+
         if self.start_date and self.end_date:
             if self.end_date < self.start_date:
-                raise ValueError("end_date is before start_date")
+                return "That trip ends before it starts - check the dates."
             span = (self.end_date - self.start_date).days + 1
             if span > MAX_TRIP_DAYS:
-                raise ValueError(
-                    f"that is {span} days; the planner handles up to {MAX_TRIP_DAYS}"
+                return (
+                    f"That is a {span}-day trip. Tio plans up to "
+                    f"{MAX_TRIP_DAYS} days at a time."
                 )
-            if self.days and self.days != span:
-                raise ValueError(
-                    f"days={self.days} does not match the {span} days between "
-                    f"start_date and end_date"
-                )
-            # Derived rather than demanded: the dates are the better source.
-            object.__setattr__(self, "days", span)
-
-        elif self.end_date and not self.start_date:
-            raise ValueError("end_date given without start_date")
 
         if self.start_date:
             if self.start_date < today:
-                raise ValueError("start_date is in the past")
+                return "That start date has already passed."
             if (self.start_date - today).days > MAX_DAYS_AHEAD:
-                raise ValueError("start_date is more than two years away")
+                return "That start date is more than two years away."
 
         if self.days is None:
-            raise ValueError("give days, or start_date and end_date")
-
-        return self
+            return "Tell us how long the trip is, or give both dates."
+        if self.days < 1:
+            return "A trip has to be at least one day."
+        if self.days > MAX_TRIP_DAYS:
+            return (
+                f"That is a {self.days}-day trip. Tio plans up to "
+                f"{MAX_TRIP_DAYS} days at a time."
+            )
+        return None
 
 
 class PlannedStopOut(BaseModel):
