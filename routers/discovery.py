@@ -22,6 +22,50 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["discovery"])
 
 
+#: How long a card's reason line can be before it stops being a line.
+_REASON_CHARS = 150
+
+
+def _match_percent(candidate, account_id) -> int:
+    """Cosine similarity as the percentage the card shows.
+
+    Deliberately the raw similarity rather than a flattering curve. Nomic
+    cosines for genuinely good matches sit around 0.5-0.7, so these read lower
+    than a marketing "94% match" - but they are the number the ranking actually
+    used, and inventing a rescale would make the figure decorative.
+    """
+    score = candidate.scores.get(account_id, candidate.group_score)
+    return max(0, min(100, round(score * 100)))
+
+
+def _tags(candidate) -> list[str]:
+    """Short labels for the card. Always a list, never None."""
+    values = [candidate.category, candidate.subcategory, candidate.city]
+    seen: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        label = str(value).replace("_", " ").strip()
+        if label and label.lower() not in {s.lower() for s in seen}:
+            seen.append(label)
+    return seen
+
+
+def _reason(candidate) -> str:
+    """One line on why this place is worth a look.
+
+    The embedded paragraph is the most faithful description we hold - it is
+    literally what the match was computed from - so a trimmed version of it is
+    honest, unlike a generated sentence that could drift from the vector.
+    """
+    text = (candidate.blurb or "").strip()
+    if not text:
+        return f"Matched to your travel profile in {candidate.city or candidate.country or 'this area'}."
+    if len(text) <= _REASON_CHARS:
+        return text
+    return text[:_REASON_CHARS].rsplit(" ", 1)[0] + "..."
+
+
 @router.get("/destinations/countries")
 def list_countries(account: Account = Depends(current_account)):
     """Countries that can actually be planned for, most options first.
@@ -93,16 +137,25 @@ def recommended_destinations(
         return {"destinations": [], "cities": [], "notes": []}
 
     return {
+        # Field names match what the home screen reads, not what reads best in
+        # isolation. `tags` in particular must always be a list: the card calls
+        # .slice(0, 3) on it unconditionally, so a missing key is a TypeError
+        # that takes the whole page down rather than one empty card.
         "destinations": [
             {
-                "location_id": str(candidate.location_id),
+                "id": str(candidate.location_id),
                 "name": candidate.name,
+                "country": candidate.country or candidate.city or "",
+                "matchScore": _match_percent(candidate, account.account_id),
+                "imageUrl": candidate.picture,
+                "tags": _tags(candidate),
+                "reason": _reason(candidate),
+                # Kept for callers that want the underlying numbers.
+                "location_id": str(candidate.location_id),
                 "city": candidate.city or candidate.region,
-                "country": candidate.country,
                 "category": candidate.category,
                 "latitude": candidate.latitude,
                 "longitude": candidate.longitude,
-                "about": candidate.blurb,
                 "score": round(candidate.final_score, 3),
             }
             for candidate in pool.candidates

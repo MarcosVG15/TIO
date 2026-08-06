@@ -146,6 +146,8 @@ class Candidate:
     website: Optional[str]
     popularity: Optional[float]
     blurb: Optional[str]
+    #: Denormalized primary image, mirrored onto Location from LocationImage.
+    picture: Optional[str] = None
     tags: dict[str, Any] = field(default_factory=dict)
 
     #: The location's own embedding, needed only while scoring. Dropped before
@@ -405,6 +407,7 @@ def _to_candidate(row: Location) -> Candidate:
         # most faithful description of what the place is like. Falling back to
         # the raw upstream prose keeps rows usable when it is absent.
         blurb=row.embedding_text or row.description,
+        picture=row.picture,
         tags=dict(row.tags or {}),
         vector=list(row.vec) if row.vec is not None else [],
     )
