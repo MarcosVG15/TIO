@@ -386,6 +386,25 @@ def _fetch_near(
     )
 
 
+def _picture_of(row: Location) -> Optional[str]:
+    """Best available image for a place.
+
+    `Location.picture` is a denormalized rollup that the seed may never have
+    filled, so fall back to the `location_images` rows it was mirrored from.
+    Prefers the thumbnail: these render in a 208px card, and shipping a 4MB
+    original to fill it is wasteful.
+    """
+    if row.picture:
+        return row.picture
+
+    images = getattr(row, "images", None) or []
+    if not images:
+        return None
+    # is_primary marks the one chosen for list views; otherwise take the first.
+    best = next((i for i in images if getattr(i, "is_primary", False)), images[0])
+    return getattr(best, "thumb_url", None) or getattr(best, "url", None)
+
+
 def _to_candidate(row: Location) -> Candidate:
     return Candidate(
         location_id=row.location_id,
@@ -407,7 +426,7 @@ def _to_candidate(row: Location) -> Candidate:
         # most faithful description of what the place is like. Falling back to
         # the raw upstream prose keeps rows usable when it is absent.
         blurb=row.embedding_text or row.description,
-        picture=row.picture,
+        picture=_picture_of(row),
         tags=dict(row.tags or {}),
         vector=list(row.vec) if row.vec is not None else [],
     )
@@ -635,6 +654,54 @@ def select_pool(
     return sorted(chosen.values(), key=lambda c: c.final_score, reverse=True)
 
 
+def pick_across_countries(
+    candidates: Sequence[Candidate],
+    limit: int,
+    per_country: int = 1,
+) -> list[Candidate]:
+    """Best candidates, spread over as many countries as possible.
+
+    Similarity search has no reason to spread out: if the corpus holds more of
+    one country than another, the whole top-k comes from it, and a "pick the
+    place" shelf showing six Austrian attractions is not a choice. Taking the
+    best from each country in turn gives the same ranking quality with a
+    shelf that is actually browsable.
+
+    Falls back to filling from what is left rather than returning short - a
+    corpus with only two countries should still return `limit` rows.
+    """
+    if limit <= 0:
+        return []
+
+    by_country: dict[str, list[Candidate]] = {}
+    for candidate in sorted(candidates, key=lambda c: c.final_score, reverse=True):
+        key = (candidate.country or candidate.region or "").strip().lower() or "?"
+        by_country.setdefault(key, []).append(candidate)
+
+    # Countries ordered by their single best candidate, so the strongest match
+    # overall still leads the shelf.
+    order = sorted(by_country, key=lambda k: by_country[k][0].final_score, reverse=True)
+
+    chosen: list[Candidate] = []
+    for round_index in range(per_country):
+        for key in order:
+            bucket = by_country[key]
+            if round_index < len(bucket):
+                chosen.append(bucket[round_index])
+                if len(chosen) >= limit:
+                    return chosen
+
+    # Still short: the corpus does not span enough countries. Top up on score.
+    if len(chosen) < limit:
+        taken = {c.location_id for c in chosen}
+        for candidate in sorted(candidates, key=lambda c: c.final_score, reverse=True):
+            if candidate.location_id not in taken:
+                chosen.append(candidate)
+                if len(chosen) >= limit:
+                    break
+    return chosen
+
+
 def rank_cities(candidates: Sequence[Candidate]) -> list[tuple[str, int, float]]:
     """(city, candidate count, mean final score), best first.
 
@@ -671,8 +738,15 @@ def build_pool(
     per_member_k: int = PER_MEMBER_K,
     quota_per_member: int = DEFAULT_QUOTA_PER_MEMBER,
     city: Optional[str] = None,
+    one_per_country: bool = False,
 ) -> Pool:
-    """Everything above, in order, for one country and one set of travellers."""
+    """Everything above, in order, for one country and one set of travellers.
+
+    `one_per_country` swaps the usual score-based selection for a spread across
+    countries. It has to happen *here* rather than to the finished pool: on a
+    lopsided corpus the score-based pass fills every slot with the dominant
+    country before anything downstream gets a chance to spread it out.
+    """
     travellers = load_travellers(account_ids)
     candidates, favourites, examined = retrieve(
         country, travellers, per_member_k, city
@@ -686,9 +760,12 @@ def build_pool(
         )
 
     scored = score_candidates(candidates, travellers, favourites)
-    selected = select_pool(
-        scored, travellers, target=target, quota_per_member=quota_per_member
-    )
+    if one_per_country:
+        selected = pick_across_countries(scored, target, per_country=1)
+    else:
+        selected = select_pool(
+            scored, travellers, target=target, quota_per_member=quota_per_member
+        )
 
     notes: list[str] = []
     if any(t.needs_step_free for t in travellers):

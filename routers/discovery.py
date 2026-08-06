@@ -107,7 +107,7 @@ def recommended_destinations(
         default=None,
         description="Narrow to one country. Omitted searches the whole corpus.",
     ),
-    limit: int = Query(default=12, ge=1, le=50),
+    limit: int = Query(default=6, ge=1, le=50),
     account: Account = Depends(current_account),
 ):
     """Locations ranked against the caller's personality vector.
@@ -121,7 +121,15 @@ def recommended_destinations(
         pool = recommend.build_pool(
             country=country,
             account_ids=[account.account_id],
+            # Retrieve well beyond the limit so there is a spread of countries
+            # to choose between. A straight top-6 off the index is whatever the
+            # corpus happens to hold most of - which is how six Austrian
+            # attractions end up being the entire shelf.
             target=limit,
+            per_member_k=200,
+            # No country named means "show me anywhere", and a shelf of six
+            # places in one country is not a choice.
+            one_per_country=country is None,
         )
     except recommend.NoProfile as exc:
         raise HTTPException(
@@ -135,6 +143,8 @@ def recommended_destinations(
         ) from exc
     except recommend.EmptyPool:
         return {"destinations": [], "cities": [], "notes": []}
+
+    shelf = pool.candidates[:limit]
 
     return {
         # Field names match what the home screen reads, not what reads best in
@@ -158,7 +168,7 @@ def recommended_destinations(
                 "longitude": candidate.longitude,
                 "score": round(candidate.final_score, 3),
             }
-            for candidate in pool.candidates
+            for candidate in shelf
         ],
         "cities": [
             {"city": city, "options": count, "score": round(score, 3)}
