@@ -5,6 +5,7 @@
     python worker.py --status  # report the queue without embedding anything
     python worker.py --verify  # prove the config reproduces the corpus vectors
     python worker.py --extract # rebuild profile paragraphs that were never made
+    python worker.py --retry-failed  # requeue rows that failed on a fixed fault
 
 Runs as its own process, separate from the API. Polls for Personality rows with
 embedding_status = 'pending', embeds them, writes the vector back.
@@ -56,6 +57,18 @@ def _status() -> int:
     print("\nprofiles by embedding_status:")
     for name in ("pending", "processing", "done", "failed"):
         print(f"  {name:<12} {counts.get(name, 0)}")
+
+    # Counts alone cannot distinguish "the provider was misconfigured" from
+    # "this profile has nothing to embed", and those need opposite fixes.
+    reasons = Pipeline().failure_reasons() if counts.get("failed") else []
+    if reasons:
+        print("\nwhy the failed ones failed:")
+        for reason, count in reasons:
+            print(f"  {count:>4}  {reason[:96]}")
+        print(
+            "\n  If that was a server-side fault which is now fixed, requeue them:"
+            "\n    python worker.py --retry-failed"
+        )
 
     if unembeddable:
         print(
@@ -155,6 +168,11 @@ def main() -> int:
         "--status", action="store_true", help="report the queue and exit"
     )
     parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="put failed profiles back in the queue (after fixing the cause)",
+    )
+    parser.add_argument(
         "--extract",
         action="store_true",
         help="rebuild missing profile paragraphs from stored onboarding answers",
@@ -176,6 +194,16 @@ def main() -> int:
 
     if args.verify:
         return _verify()
+
+    if args.retry_failed:
+        counts = Pipeline().requeue_failed()
+        print(f"requeued {counts['requeued']} profile(s)")
+        if counts["no_paragraph"]:
+            print(
+                f"{counts['no_paragraph']} have no paragraph to embed - "
+                f"run --extract for those"
+            )
+        return 0
 
     if args.extract:
         counts = Pipeline().reextract_missing_paragraphs()

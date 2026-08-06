@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from DATABASE.ORM import (
     Account,
@@ -454,6 +454,55 @@ class Pipeline:
                 log.info("rebuilt profile paragraph for %s", account.name)
 
         return counts
+
+    def requeue_failed(self, limit: int = 500) -> dict[str, int]:
+        """Put failed profiles back in the queue.
+
+        A row lands in 'failed' after `max_attempts` embedding errors, and
+        nothing moves it back on its own - which is correct while the cause is
+        the row itself, and wrong when the cause was the server. A misconfigured
+        provider fails every row it touches, and once fixed there is no path
+        back without this.
+
+        Only rows that have something to embed are requeued. One without a
+        paragraph would fail again immediately, so it is counted and left
+        alone - see reextract_missing_paragraphs for those.
+        """
+        counts = {"requeued": 0, "no_paragraph": 0}
+        with session_scope() as session:
+            rows = session.scalars(
+                select(Personality)
+                .where(Personality.embedding_status == EmbeddingStatus.FAILED)
+                .limit(limit)
+            ).all()
+            for personality in rows:
+                if not (personality.profile_paragraph or "").strip():
+                    counts["no_paragraph"] += 1
+                    continue
+                personality.embedding_status = EmbeddingStatus.PENDING
+                # Reset the counter too: the attempts were spent on a fault
+                # that has since been fixed, and carrying them over would park
+                # the row again after a single hiccup.
+                personality.embedding_attempts = 0
+                personality.embedding_error = None
+                counts["requeued"] += 1
+        return counts
+
+    def failure_reasons(self, limit: int = 10) -> list[tuple[str, int]]:
+        """Distinct embedding_error values among failed rows, commonest first.
+
+        Counts alone cannot tell "the model was misconfigured" from "this
+        profile has nothing to embed", and those need opposite fixes.
+        """
+        with session_scope() as session:
+            rows = session.execute(
+                select(Personality.embedding_error, func.count())
+                .where(Personality.embedding_status == EmbeddingStatus.FAILED)
+                .group_by(Personality.embedding_error)
+                .order_by(func.count().desc())
+                .limit(limit)
+            ).all()
+        return [(reason or "(none recorded)", count) for reason, count in rows]
 
     def requeue_stale_processing(self, older_than: timedelta) -> int:
         """Return abandoned 'processing' rows to the queue.
