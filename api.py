@@ -10,7 +10,9 @@ there is no cross-origin request to allow.
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
@@ -46,11 +48,41 @@ def _dev_origins() -> list[str]:
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
 
 
+def _warm_destinations() -> None:
+    """Compute the destination shelf once, off any request path.
+
+    The shelf's last-good fallback lives in process memory, so every restart
+    starts with nothing to fall back to - and the first visitor after a deploy
+    is exactly who meets a database busy with corpus enrichment. Warming it in
+    the background means that visitor gets a shelf rather than an apology, and
+    nobody ever waits for the first computation.
+
+    Best effort by design. A failure here must not stop the API from serving
+    everything else, so it is logged and dropped; the next request simply falls
+    through to computing it itself.
+    """
+    import recommend
+
+    try:
+        found = recommend.top_destinations(days=4, limit=25)
+        logging.getLogger(__name__).info(
+            "warmed destination shelf: %d cities", len(found)
+        )
+    except Exception as exc:  # noqa: BLE001 - never fatal at boot
+        logging.getLogger(__name__).warning(
+            "could not warm destination shelf: %s", exc
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Refuse to start on bad configuration. A boot failure in the deploy log
     # beats a 500 the first time a real user tries to sign up.
     auth_config.validate_config()
+
+    # After validation, before serving: a daemon thread so a slow aggregate
+    # cannot delay the port opening and fail the container's health check.
+    threading.Thread(target=_warm_destinations, daemon=True).start()
     yield
 
 
