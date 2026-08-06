@@ -25,7 +25,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 
 from DATABASE.ORM import Location, session_scope
 
@@ -55,29 +55,40 @@ def _clean(code: Optional[str]) -> Optional[str]:
 
 
 def _from_corpus(city: str, country: Optional[str]) -> Optional[str]:
-    """Look for an aerodrome the seed already tagged with an IATA code."""
+    """Look for an aerodrome the seed already tagged with an IATA code.
+
+    Matched case-sensitively against `city`, which is what makes this usable.
+    `lower(city) = lower(:city)` cannot use the index on `city`, so it becomes
+    a sequential scan of the whole locations table - eight million rows for one
+    airport code, once per city in a plan. That was the single largest cost in
+    the suggestions endpoint and it was invisible on a small test corpus.
+
+    Case-sensitivity is safe here because the caller passes a city name that
+    came out of this same table, so it already matches the stored spelling.
+    """
     conditions = [
-        func.lower(Location.city) == city.lower(),
+        Location.city == city,
         Location.tags.has_key("iata"),  # noqa: W601 - JSONB ? operator
     ]
     if country:
         conditions.append(
-            or_(
-                func.lower(Location.country) == country.lower(),
-                func.lower(Location.region) == country.lower(),
-            )
+            or_(Location.country == country, Location.region == country)
         )
 
     try:
         with session_scope() as session:
+            # Bounded regardless. If this ever does fall back to a scan - a
+            # planner choice, a missing index - it must give up rather than
+            # spend the request's entire budget looking for an airport code.
+            session.execute(text("SET LOCAL statement_timeout = '1500ms'"))
             row = session.scalar(
                 select(Location).where(*conditions).limit(1)
             )
             if row is not None:
                 return _clean((row.tags or {}).get("iata"))
     except Exception as exc:
-        # A missing column or an odd JSONB value must not take flight search
-        # down with it - the model fallback still works.
+        # A missing column, an odd JSONB value, or the timeout above must not
+        # take flight search down with it - the model fallback still works.
         log.debug("corpus airport lookup failed for %s: %s", city, exc)
     return None
 

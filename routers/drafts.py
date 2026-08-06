@@ -12,6 +12,7 @@ module fixes.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type
@@ -282,6 +283,16 @@ def trip_suggestions(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem
         )
 
+    # Stage timings, logged on every call. This endpoint has to fit inside the
+    # browser's twelve seconds and has already been slow for two different
+    # reasons; without per-stage numbers in the log, diagnosing a third means
+    # guessing.
+    marks: list[tuple[str, float]] = []
+    began = time.monotonic()
+
+    def mark(label: str) -> None:
+        marks.append((label, time.monotonic() - began))
+
     country, city = _split_destination(payload.destination)
     days = payload.days()
 
@@ -313,6 +324,8 @@ def trip_suggestions(
             detail=f"Nothing to suggest for {payload.destination} yet.",
         ) from exc
 
+    mark("pool")
+
     avoid: list[uuid.UUID] = []
     for raw in payload.avoid_location_ids:
         try:
@@ -335,6 +348,8 @@ def trip_suggestions(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Could not build plans right now. Try again.",
         ) from exc
+
+    mark("compose")
 
     traveller = pool.travellers[0] if pool.travellers else None
     home = getattr(traveller, "home_city", None)
@@ -376,6 +391,13 @@ def trip_suggestions(
         )
         for plan, costed in zip(result.plans, costs)
     ]
+
+    mark("cost")
+    log.info(
+        "suggestions for %s: %s",
+        payload.destination,
+        " ".join("%s=%.2fs" % (label, at) for label, at in marks),
+    )
 
     return {
         "suggestions": suggestions,
