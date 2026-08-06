@@ -19,7 +19,7 @@ from datetime import date as date_type
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 
 import airports
@@ -54,12 +54,22 @@ class DraftIn(BaseModel):
     protect them from a mistake they have not made yet.
     """
 
-    model_config = {"extra": "allow"}
+    # Both spellings accepted. The screen builds its form state in camelCase
+    # and converts to snake_case for /trips/suggestions - but posts the draft
+    # object through unconverted, while the code that reads drafts back expects
+    # snake_case. So it writes startDate and reads start_date, and the dates
+    # vanish. Accepting either and always returning snake_case fixes it here
+    # rather than waiting for a frontend rebuild to fix it there.
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     title: Optional[str] = None
     destination: Optional[str] = None
-    start_date: Optional[date_type] = None
-    end_date: Optional[date_type] = None
+    start_date: Optional[date_type] = Field(
+        default=None, validation_alias=AliasChoices("start_date", "startDate")
+    )
+    end_date: Optional[date_type] = Field(
+        default=None, validation_alias=AliasChoices("end_date", "endDate")
+    )
     travellers: Optional[int] = None
     vibe: Optional[str] = None
     notes: Optional[str] = None
@@ -68,9 +78,14 @@ class DraftIn(BaseModel):
     currency: Optional[str] = None
     features: list[str] = Field(default_factory=list)
     companions: list[dict[str, Any]] = Field(default_factory=list)
-    group_chat: dict[str, Any] = Field(default_factory=dict)
+    group_chat: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("group_chat", "groupChat"),
+    )
     #: Present when the screen is updating a draft rather than creating one.
-    draft_id: Optional[str] = None
+    draft_id: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("draft_id", "draftId", "id")
+    )
 
 
 def _draft_out(row: TripDraft) -> dict[str, Any]:
@@ -110,6 +125,11 @@ def save_draft(
     # as strings anyway.
     body = payload.model_dump(mode="json", exclude_none=False)
     draft_id = body.pop("draft_id", None)
+    # extra="allow" keeps the camelCase originals alongside the fields they
+    # populated, so drop them: the stored payload is echoed back verbatim and
+    # two spellings of the same value is how they drift apart.
+    for duplicate in ("startDate", "endDate", "groupChat", "draftId", "id"):
+        body.pop(duplicate, None)
 
     with session_scope() as session:
         row = None
