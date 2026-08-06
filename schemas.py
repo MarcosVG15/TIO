@@ -363,6 +363,11 @@ class TripOut(BaseModel):
     budget_limit: Optional[Decimal] = None
     origin_location: Optional[LocationOut] = None
     group_id: Optional[str] = None
+    #: Where a map should open. The trip mapper in the frontend already reads
+    #: `lat`/`lng` and defaults them to 0, which is a point in the Atlantic -
+    #: so any map added later would centre on the ocean without these.
+    lat: Optional[float] = None
+    lng: Optional[float] = None
     #: Present on creation, when the plan was generated with the trip. The
     #: screen reads `trip.itinerary` straight after posting.
     itinerary: list[PlannedItemOut] = Field(default_factory=list)

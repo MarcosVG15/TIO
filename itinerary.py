@@ -59,7 +59,8 @@ emit the structured plan set only.
 
 THE POOL IS THE WORLD
 
-Every stop you place must use a location_id from the supplied pool. You may not
+Every stop you place must use a `ref` number from the supplied pool, copied
+exactly. Refs are small integers - use the number, not the name. You may not
 invent a place, and you may not name a place that is not in the pool, not even
 as a suggestion in prose. If the pool cannot support a plan of the requested
 length, produce a shorter plan and say so in tradeoffs. A plan that is honestly
@@ -150,14 +151,17 @@ travellers: {traveller_count}
 {pool_json}
 </pool>
 
-The pool is every place available to you. `fit` is cosine similarity per
-traveller (higher is better), `group_fit` is the least-satisfied member's score,
-and `reserved_for` marks places retrieved specifically because they suit that
-traveller."""
+The pool is every place available to you. Use the `ref` number to refer to a
+place. `fit` is cosine similarity per traveller (higher is better), `group_fit`
+is the least-satisfied member's score, and `reserved_for` marks places retrieved
+specifically because they suit that traveller."""
 
 
 class PlannedStop(BaseModel):
-    location_id: str = Field(description="Must be a location_id from the pool.")
+    #: The pool entry's `ref` number. An integer rather than a UUID because a
+    #: model copies a small number reliably and a 36-character identifier does
+    #: not - see the module note on why a stripped plan is the worst outcome.
+    ref: int = Field(description="A ref number from the pool.")
     part_of_day: PartOfDay
     #: Short label for the timetable row, e.g. "Lunch at the covered market".
     title: str = Field(max_length=120)
@@ -197,6 +201,9 @@ class PlanningResult:
     #: Stops removed because of the above.
     dropped_stops: int
     model: str
+    #: ref -> Candidate, for the ordering the model was actually shown. Callers
+    #: resolve stops through this rather than guessing.
+    by_ref: dict = None
 
     @property
     def clean(self) -> bool:
@@ -220,13 +227,15 @@ def _traveller_payload(traveller: Traveller) -> dict:
     }
 
 
-def _candidate_payload(candidate: Candidate, travellers: Sequence[Traveller]) -> dict:
+def _candidate_payload(
+    candidate: Candidate, travellers: Sequence[Traveller], ref: int
+) -> dict:
     blurb = (candidate.blurb or "").strip()
     if len(blurb) > MAX_BLURB_CHARS:
         blurb = blurb[:MAX_BLURB_CHARS].rsplit(" ", 1)[0] + "..."
 
     payload = {
-        "location_id": str(candidate.location_id),
+        "ref": ref,
         "name": candidate.name,
         "city": candidate.city or candidate.region,
         "category": candidate.category,
@@ -323,7 +332,7 @@ def _build_prompt(
     if feedback:
         extra_lines.append(f"the traveller said: {feedback}")
 
-    return PROMPT.format(
+    prompt = PROMPT.format(
         country=pool.country,
         days=days,
         traveller_count=len(pool.travellers),
@@ -334,23 +343,30 @@ def _build_prompt(
         constraints=_constraints_block(pool),
         flights=flights or "No flight information was checked.",
         pool_json=json.dumps(
-            [_candidate_payload(c, pool.travellers) for c in shown], indent=1
+            [
+                _candidate_payload(c, pool.travellers, index + 1)
+                for index, c in enumerate(shown)
+            ],
+            indent=1,
         ),
     )
+    # The validator needs the exact ordering the model was shown, or a ref
+    # would resolve to a different place than the one it chose.
+    return prompt, shown
 
 
 def _validate(
     plan_set: PlanSet,
-    pool: Pool,
+    shown: Sequence[Candidate],
     days: int,
 ) -> tuple[list[TripPlan], list[str], int]:
-    """Strip anything the model made up; report what was stripped.
+    """Resolve refs to real places; strip anything that does not resolve.
 
-    Unknown ids are dropped rather than raising: two good plans and one thin
-    one beats an error page. The count is returned so a rising number shows up
-    as a prompt problem instead of quietly degrading recommendations.
+    Out-of-range refs are dropped rather than raising: two good plans and one
+    thin one beats an error page. The count is returned so a rising number
+    shows up as a prompt problem instead of quietly degrading plans.
     """
-    known = {str(c.location_id) for c in pool.candidates}
+    known = {index + 1 for index in range(len(shown))}
     hallucinated: list[str] = []
     dropped = 0
     kept: list[TripPlan] = []
@@ -364,10 +380,10 @@ def _validate(
                 continue
             stops = []
             for stop in day.stops:
-                if stop.location_id in known:
+                if stop.ref in known:
                     stops.append(stop)
                 else:
-                    hallucinated.append(stop.location_id)
+                    hallucinated.append(str(stop.ref))
                     dropped += 1
             if stops:
                 clean_days.append(day.model_copy(update={"stops": stops}))
@@ -413,7 +429,7 @@ def compose(
     if days < 1:
         raise ValueError("a trip needs at least one day")
 
-    prompt = _build_prompt(pool, days, avoid, feedback, flights)
+    prompt, shown = _build_prompt(pool, days, avoid, feedback, flights)
 
     try:
         completion = _get_client().chat.completions.parse(
@@ -432,7 +448,7 @@ def compose(
     if parsed is None:
         raise PlanningError("the planner returned no structured output")
 
-    plans, hallucinated, dropped = _validate(parsed, pool, days)
+    plans, hallucinated, dropped = _validate(parsed, shown, days)
 
     if hallucinated:
         log.warning(
@@ -447,4 +463,5 @@ def compose(
         hallucinated=hallucinated,
         dropped_stops=dropped,
         model=MODEL_ID,
+        by_ref={index + 1: candidate for index, candidate in enumerate(shown)},
     )

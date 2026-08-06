@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 
 import itinerary as planner
+import maps
 import recommend
 from DATABASE.ORM import (
     Account,
@@ -100,7 +101,20 @@ def _location_out(location: Optional[Location]) -> Optional[LocationOut]:
     )
 
 
+def _trip_centre(trip: Trip):
+    """Mean position of the trip's located stops, for a map to open on."""
+    points = [
+        {"latitude": i.location.latitude, "longitude": i.location.longitude}
+        for i in (trip.itinerary_items or [])
+        if i.location is not None
+        and i.location.latitude is not None
+        and i.location.longitude is not None
+    ]
+    return maps.centroid(points)
+
+
 def _trip_out(trip: Trip) -> TripOut:
+    centre = _trip_centre(trip)
     return TripOut(
         trip_id=str(trip.trip_id),
         name=trip.name,
@@ -111,6 +125,8 @@ def _trip_out(trip: Trip) -> TripOut:
         budget_limit=trip.budget_limit,
         origin_location=_location_out(trip.origin_location),
         group_id=str(trip.group_id) if trip.group_id else None,
+        lat=centre[0] if centre else None,
+        lng=centre[1] if centre else None,
     )
 
 
@@ -268,6 +284,19 @@ def create_trip(
     # Outside the transaction: planning is slow and paid, and holding a
     # connection open across it would pin one for the duration.
     created.itinerary = _generate_itinerary(trip_id, payload, account)
+
+    # The centre has to come from the plan, not from the trip row: _trip_out ran
+    # before any itinerary existed, so it had nothing to average.
+    located = [
+        {"latitude": item.location.latitude, "longitude": item.location.longitude}
+        for item in created.itinerary
+        if item.location
+        and item.location.latitude is not None
+        and item.location.longitude is not None
+    ]
+    centre = maps.centroid(located)
+    if centre:
+        created.lat, created.lng = centre
     return created
 
 
@@ -311,14 +340,16 @@ def _generate_itinerary(
     if not result.plans:
         return []
 
-    by_id = {str(c.location_id): c for c in pool.candidates}
+    # Resolved through the mapping the composer actually showed the model,
+    # not by guessing at ids.
+    by_ref = result.by_ref or {}
     chosen = result.plans[0]
     out: list[PlannedItemOut] = []
 
     with session_scope() as session:
         for day in chosen.days:
             for order, stop in enumerate(day.stops):
-                candidate = by_id.get(stop.location_id)
+                candidate = by_ref.get(stop.ref)
                 if candidate is None:
                     continue
                 item = ItineraryItem(
@@ -449,6 +480,66 @@ def list_itinerary(
             )
         ).all()
         return [_item_out(item) for item in items]
+
+
+@router.get("/trips/{trip_id}/map")
+def trip_map(
+    trip_id: str,
+    account: Account = Depends(current_account),
+):
+    """The trip as GeoJSON, plus what a map needs to open on it.
+
+    A FeatureCollection: one Point per located stop, one LineString per day in
+    visiting order. Renders unmodified in Leaflet, MapLibre, Mapbox or QGIS.
+
+    Each day's LineString also carries a Google Maps walking-directions link,
+    which is the part that is useful *today* - the deployed frontend has no map
+    library, so a link the traveller can open beats a map view that needs a
+    frontend release.
+
+    Stops with no coordinates are counted in `properties.unlocated` rather than
+    dropped silently: a route missing two of its five stops should be visibly
+    incomplete.
+    """
+    with session_scope() as session:
+        trip = _load_trip(session, trip_id, account)
+        items = session.scalars(
+            select(ItineraryItem)
+            .where(ItineraryItem.trip_id == trip.trip_id)
+            .order_by(
+                ItineraryItem.date.asc().nullslast(),
+                ItineraryItem.time.asc().nullslast(),
+            )
+        ).all()
+
+        stops = []
+        for item in items:
+            details = dict(item.details or {})
+            location = item.location
+            stops.append(
+                {
+                    "itinerary_id": str(item.itinerary_id),
+                    "name": location.name if location else None,
+                    "title": details.get("title") or item.description,
+                    "day": details.get("day") or _day_from_dates(trip, item),
+                    "part_of_day": details.get("part_of_day"),
+                    "order": details.get("order") or 0,
+                    "category": item.activity_type.value,
+                    "completed": item.booking_status.value == "confirmed",
+                    "latitude": location.latitude if location else None,
+                    "longitude": location.longitude if location else None,
+                }
+            )
+        trip_name = trip.name
+
+    return maps.geojson(stops, trip_name)
+
+
+def _day_from_dates(trip, item) -> int:
+    """Day number when the plan metadata is absent - a hand-added item."""
+    if trip.start_date and item.date:
+        return max(1, (item.date - trip.start_date).days + 1)
+    return 1
 
 
 @router.post(

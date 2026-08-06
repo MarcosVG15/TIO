@@ -227,9 +227,9 @@ def suggest(
                     city=day.city,
                     summary=day.summary,
                     stops=[
-                        _stop_out(by_id[stop.location_id], stop, pool.travellers)
+                        _stop_out(result.by_ref[stop.ref], stop, pool.travellers)
                         for stop in day.stops
-                        if stop.location_id in by_id
+                        if stop.ref in (result.by_ref or {})
                     ],
                 )
                 for day in plan.days
