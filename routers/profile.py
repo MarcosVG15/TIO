@@ -82,7 +82,11 @@ def upload_avatar(
             detail="Could not save that picture right now. Try again.",
         ) from exc
 
-    return {"avatar_url": url}
+    # Both keys on purpose. The frontend reads `url`; `avatar_url` matches the
+    # column and the field name PATCH /profile takes back. They are the same
+    # string, and returning one of them only would break a caller that is build
+    # output we do not control.
+    return {"url": url, "avatar_url": url}
 
 
 @router.patch("", response_model=ProfileOut)

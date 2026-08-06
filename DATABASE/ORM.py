@@ -961,8 +961,19 @@ class ItineraryItem(Base):
         default=BookingStatus.NOT_REQUIRED,
     )
     booking_ref: Mapped[Optional[str]] = mapped_column(String(120))
+    #: Where the traveller completes or revisits the booking. A saved flight is
+    #: useless without it - the price we showed came from a cache, so the link
+    #: is the only route to an actual purchase.
+    booking_url: Mapped[Optional[str]] = mapped_column(String(2048))
     cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
     description: Mapped[Optional[str]] = mapped_column(Text)
+    #: Whatever the supplier said, kept verbatim. JSONB rather than columns per
+    #: field because a flight, a train and a museum ticket have almost nothing
+    #: in common, and a column per supplier field would be a migration per
+    #: integration. Same reasoning as Location.tags.
+    details: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     vec: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIM), nullable=True
     )

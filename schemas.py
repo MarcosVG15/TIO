@@ -7,6 +7,13 @@ at /openapi.json, which can be compiled straight into TypeScript types.
 from __future__ import annotations
 
 from datetime import date, datetime, time
+
+# Aliases for the itinerary fields whose names shadow their own types. With
+# `from __future__ import annotations`, `date: Optional[date] = None` resolves
+# the annotation against the class namespace - where `date` is now the field's
+# default, None - so the field silently becomes NoneType and rejects every real
+# date. The alias breaks the shadowing. The wire name is unaffected.
+from datetime import date as date_type, time as time_type
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -284,8 +291,8 @@ class TripOut(BaseModel):
 
 class ItineraryItemCreate(BaseModel):
     location_id: Optional[str] = None
-    date: Optional[date] = None
-    time: Optional[time] = None
+    date: Optional[date_type] = None
+    time: Optional[time_type] = None
     duration_minutes: Optional[int] = Field(default=None, ge=0)
     activity_type: ActivityType = ActivityType.OTHER
     weather_dependent: bool = False
@@ -294,8 +301,8 @@ class ItineraryItemCreate(BaseModel):
 
 
 class ItineraryItemUpdate(BaseModel):
-    date: Optional[date] = None
-    time: Optional[time] = None
+    date: Optional[date_type] = None
+    time: Optional[time_type] = None
     duration_minutes: Optional[int] = Field(default=None, ge=0)
     activity_type: Optional[ActivityType] = None
     booking_status: Optional[BookingStatus] = None
@@ -308,12 +315,129 @@ class ItineraryItemOut(BaseModel):
     itinerary_id: str
     trip_id: str
     location: Optional[LocationOut] = None
-    date: Optional[date] = None
-    time: Optional[time] = None
+    date: Optional[date_type] = None
+    time: Optional[time_type] = None
     duration_minutes: Optional[int] = None
     activity_type: ActivityType
     weather_dependent: bool
     booking_status: BookingStatus
     booking_ref: Optional[str] = None
+    #: Present for anything bought elsewhere - flights, tickets.
+    booking_url: Optional[str] = None
     cost: Optional[Decimal] = None
     description: Optional[str] = None
+    #: Supplier payload for items that have one. Opaque to the frontend except
+    #: for flights, where it carries carrier, stops and duration.
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Planning
+#
+# The suggestion engine. One request produces three whole trips, so these are
+# read-only projections of what the planner returned rather than anything the
+# client can create directly - a plan becomes durable only when the user saves
+# it as a Trip.
+# ---------------------------------------------------------------------------
+
+
+class SuggestRequest(BaseModel):
+    country: str = Field(min_length=2, max_length=120)
+    days: int = Field(ge=1, le=21)
+    #: Plan for a group instead of just the caller. The caller must be a member.
+    group_id: Optional[str] = None
+    #: Regeneration: places already shown, so a second press differs.
+    avoid_location_ids: list[str] = Field(default_factory=list, max_length=400)
+    #: Free text from the traveller, e.g. "too many churches".
+    feedback: Optional[str] = Field(default=None, max_length=500)
+
+
+class PlannedStopOut(BaseModel):
+    location: LocationOut
+    part_of_day: str
+    title: str
+    note: str
+    category: Optional[str] = None
+    #: Per-traveller fit, keyed by display name. Empty for a solo trip.
+    fit: dict[str, float] = Field(default_factory=dict)
+
+
+class PlannedDayOut(BaseModel):
+    day: int
+    city: str
+    summary: str
+    stops: list[PlannedStopOut]
+
+
+class TripPlanOut(BaseModel):
+    title: str
+    #: "single_city" | "multi_city" | "themed"
+    shape: str
+    cities: list[str]
+    rationale: str
+    #: What this plan gives up relative to the other two. Never empty.
+    tradeoffs: str
+    days: list[PlannedDayOut]
+
+
+class SuggestResponse(BaseModel):
+    country: str
+    days: int
+    travellers: list[str]
+    plans: list[TripPlanOut]
+    #: Caveats the UI must show - accessibility filtering, unverifiable diets.
+    notes: list[str] = Field(default_factory=list)
+    #: Every location the plans drew on, so "regenerate" can exclude them.
+    considered_location_ids: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Flights
+# ---------------------------------------------------------------------------
+
+
+class FlightOfferOut(BaseModel):
+    origin: str
+    destination: str
+    depart_date: date
+    return_date: Optional[date] = None
+    price: Decimal
+    currency: str
+    airline: Optional[str] = None
+    flight_number: Optional[str] = None
+    stops: Optional[int] = None
+    duration_minutes: Optional[int] = None
+    #: Where to actually buy it.
+    booking_url: str
+    provider: str
+    #: True when the price came from a cache. See flights.py - it means the
+    #: fare is indicative and the checkout may reprice.
+    is_cached: bool
+    fetched_at: datetime
+
+
+class FlightSearchResponse(BaseModel):
+    offers: list[FlightOfferOut] = Field(default_factory=list)
+    #: Shown verbatim next to the prices. Not optional: presenting a cached
+    #: fare as bookable is how this feature misleads someone's budget.
+    disclaimer: str
+
+
+class SaveFlightRequest(BaseModel):
+    """Pin a searched offer onto a trip's itinerary.
+
+    The whole offer is echoed back rather than an id, because the provider's
+    cache is not addressable - there is no offer to re-fetch by reference.
+    """
+
+    origin: str = Field(min_length=3, max_length=3)
+    destination: str = Field(min_length=3, max_length=3)
+    depart_date: date
+    return_date: Optional[date] = None
+    price: Optional[Decimal] = Field(default=None, ge=0)
+    currency: str = Field(default="EUR", max_length=8)
+    airline: Optional[str] = Field(default=None, max_length=16)
+    flight_number: Optional[str] = Field(default=None, max_length=16)
+    stops: Optional[int] = Field(default=None, ge=0)
+    duration_minutes: Optional[int] = Field(default=None, ge=0)
+    booking_url: str = Field(min_length=1, max_length=2048)
