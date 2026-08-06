@@ -17,7 +17,7 @@ from datetime import date as date_type, time as time_type
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 import passwords
 from DATABASE.ORM import ActivityType, BookingStatus, TripStatus
@@ -341,15 +341,71 @@ class ItineraryItemOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+#: A trip longer than this is not a trip, and the planner cannot fill it from
+#: one country's pool without repeating itself.
+MAX_TRIP_DAYS = 21
+
+#: Far enough ahead for anyone planning seriously; beyond it the dates are
+#: almost certainly a typo or a mis-set year.
+MAX_DAYS_AHEAD = 730
+
+
 class SuggestRequest(BaseModel):
     country: str = Field(min_length=2, max_length=120)
-    days: int = Field(ge=1, le=21)
+    #: Optional. Must be a city the corpus places inside `country` - validated
+    #: against the corpus in the router, since only the database knows.
+    city: Optional[str] = Field(default=None, max_length=150)
+    #: Either give `days`, or give both dates and let the length be derived.
+    days: Optional[int] = Field(default=None, ge=1, le=MAX_TRIP_DAYS)
+    start_date: Optional[date_type] = None
+    end_date: Optional[date_type] = None
     #: Plan for a group instead of just the caller. The caller must be a member.
     group_id: Optional[str] = None
     #: Regeneration: places already shown, so a second press differs.
     avoid_location_ids: list[str] = Field(default_factory=list, max_length=400)
     #: Free text from the traveller, e.g. "too many churches".
     feedback: Optional[str] = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _dates_make_sense(self) -> "SuggestRequest":
+        """Reject date combinations that cannot describe a real trip.
+
+        Done here rather than in the router so the rules are part of the
+        published schema, and so an impossible request never reaches the
+        planner - an LLM asked to fill "-3 days" will invent something rather
+        than refuse.
+        """
+        today = date_type.today()
+
+        if self.start_date and self.end_date:
+            if self.end_date < self.start_date:
+                raise ValueError("end_date is before start_date")
+            span = (self.end_date - self.start_date).days + 1
+            if span > MAX_TRIP_DAYS:
+                raise ValueError(
+                    f"that is {span} days; the planner handles up to {MAX_TRIP_DAYS}"
+                )
+            if self.days and self.days != span:
+                raise ValueError(
+                    f"days={self.days} does not match the {span} days between "
+                    f"start_date and end_date"
+                )
+            # Derived rather than demanded: the dates are the better source.
+            object.__setattr__(self, "days", span)
+
+        elif self.end_date and not self.start_date:
+            raise ValueError("end_date given without start_date")
+
+        if self.start_date:
+            if self.start_date < today:
+                raise ValueError("start_date is in the past")
+            if (self.start_date - today).days > MAX_DAYS_AHEAD:
+                raise ValueError("start_date is more than two years away")
+
+        if self.days is None:
+            raise ValueError("give days, or start_date and end_date")
+
+        return self
 
 
 class PlannedStopOut(BaseModel):

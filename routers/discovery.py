@@ -22,6 +22,41 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["discovery"])
 
 
+@router.get("/destinations/countries")
+def list_countries(account: Account = Depends(current_account)):
+    """Countries that can actually be planned for, most options first.
+
+    Sourced from the corpus, not a static list: offering a country with no
+    embedded locations produces an empty plan the user cannot explain.
+    """
+    return {
+        "countries": [
+            {"country": country, "options": count}
+            for country, count in recommend.list_countries()
+        ]
+    }
+
+
+@router.get("/destinations/cities")
+def list_cities(
+    country: str = Query(min_length=2, max_length=120),
+    account: Account = Depends(current_account),
+):
+    """Cities inside one country, most options first.
+
+    This is what makes an impossible pairing unselectable rather than merely
+    rejected: the picker can only ever offer cities the corpus places in the
+    country that was chosen.
+    """
+    return {
+        "country": country,
+        "cities": [
+            {"city": city, "options": count}
+            for city, count in recommend.list_cities(country)
+        ],
+    }
+
+
 @router.get("/destinations/recommended")
 def recommended_destinations(
     country: Optional[str] = Query(

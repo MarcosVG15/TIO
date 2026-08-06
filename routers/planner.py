@@ -106,11 +106,27 @@ def suggest(
     """
     account_ids = _resolve_travellers(payload.group_id, account)
 
+    # A city has to be in the country the caller named. Checked against the
+    # corpus rather than a gazetteer, because the corpus is what the plan will
+    # be built from - a city that is real but unrepresented is just as unusable
+    # as one in the wrong country.
+    if payload.city and not recommend.city_in_country(payload.city, payload.country):
+        available = [name for name, _ in recommend.list_cities(payload.country)][:12]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{payload.city} is not a city we can plan for in "
+                f"{payload.country}."
+                + (f" Try: {', '.join(available)}." if available else "")
+            ),
+        )
+
     try:
         pool = recommend.build_pool(
             country=payload.country,
             account_ids=account_ids,
             target=POOL_TARGET,
+            city=payload.city,
         )
     except recommend.NoProfile as exc:
         # 409, not 404: the account exists, it is just not ready to be planned

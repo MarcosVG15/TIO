@@ -58,6 +58,8 @@ services:
     command: ["python", "worker.py"]
     env_file: .env
     environment:
+      # Inside the compose network the model is "ollama", not localhost.
+      OLLAMA_URL: http://ollama:11434
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tio_database}
     depends_on:
       db:
@@ -80,7 +82,25 @@ services:
     depends_on:
       - api
 
+  ollama:
+    # Runs the embedding model the location corpus was built with.
+    # CPU-only on purpose: the GPU was needed to embed the corpus, but a
+    # user is one paragraph at signup - about a second here. Nomic's
+    # hosted API cannot serve v2-moe at all, so this is the only way to
+    # produce vectors that match the corpus.
+    #
+    # The model is NOT in the image. After first start, once:
+    #   docker compose exec ollama ollama pull nomic-embed-text-v2-moe
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      # ~1 GB of model weights. Without this every restart re-downloads.
+      - tio_ollama:/root/.ollama
+    expose:
+      - "11434"
+
 volumes:
   tio_pgdata:
+  tio_ollama:
   caddy_data:
   caddy_config:

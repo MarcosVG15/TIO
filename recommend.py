@@ -262,6 +262,53 @@ def load_travellers(
         return [_traveller_from_rows(*found[account_id]) for account_id in account_ids]
 
 
+def list_countries() -> list[tuple[str, int]]:
+    """Countries the corpus can actually plan for, most options first.
+
+    Only rows with a vector count. A country present in the corpus but not yet
+    embedded cannot be planned for, and offering it would produce an empty
+    result the user cannot explain.
+    """
+    with session_scope() as session:
+        rows = session.execute(
+            select(Location.country, func.count())
+            .where(Location.vec.is_not(None), Location.country.is_not(None))
+            .group_by(Location.country)
+            .order_by(func.count().desc())
+        ).all()
+    return [(country, count) for country, count in rows if country]
+
+
+def list_cities(country: str, minimum: int = 1) -> list[tuple[str, int]]:
+    """Cities within one country, most options first.
+
+    The city list is derived from the corpus rather than a static gazetteer, so
+    a city can only ever be offered for the country it actually sits in - which
+    is what stops "Spain / Lisbon" being selectable at all.
+    """
+    with session_scope() as session:
+        rows = session.execute(
+            select(Location.city, func.count())
+            .where(
+                Location.vec.is_not(None),
+                Location.city.is_not(None),
+                or_(
+                    func.lower(Location.country) == country.lower(),
+                    func.lower(Location.region) == country.lower(),
+                ),
+            )
+            .group_by(Location.city)
+            .having(func.count() >= minimum)
+            .order_by(func.count().desc())
+        ).all()
+    return [(city, count) for city, count in rows if city]
+
+
+def city_in_country(city: str, country: str) -> bool:
+    """Whether the corpus places this city in this country."""
+    return any(name.lower() == city.lower() for name, _ in list_cities(country))
+
+
 def group_member_ids(group_id: UUID) -> list[UUID]:
     with session_scope() as session:
         return list(
@@ -276,7 +323,11 @@ def group_member_ids(group_id: UUID) -> list[UUID]:
 # ---------------------------------------------------------------------------
 
 
-def _base_filters(country: Optional[str], travellers: Sequence[Traveller]):
+def _base_filters(
+    country: Optional[str],
+    travellers: Sequence[Traveller],
+    city: Optional[str] = None,
+):
     """Hard filters. Everything here excludes rows outright.
 
     `country` is optional so the same path serves "somewhere in Spain" and
@@ -286,6 +337,11 @@ def _base_filters(country: Optional[str], travellers: Sequence[Traveller]):
         Location.vec.is_not(None),
         Location.category.not_in(EXCLUDED_CATEGORIES),
     ]
+
+    if city:
+        # Narrowing to a city makes the whole plan local, which is the point of
+        # offering the choice at all.
+        conditions.append(func.lower(Location.city) == city.lower())
 
     if country:
         conditions.append(
@@ -311,6 +367,7 @@ def _fetch_near(
     country: Optional[str],
     travellers: Sequence[Traveller],
     limit: int,
+    city: Optional[str] = None,
 ) -> list[Location]:
     """The k nearest surviving rows to one vector.
 
@@ -320,7 +377,7 @@ def _fetch_near(
     return list(
         session.scalars(
             select(Location)
-            .where(_base_filters(country, travellers))
+            .where(_base_filters(country, travellers, city))
             .order_by(Location.vec.cosine_distance(list(vector)))
             .limit(limit)
         ).all()
@@ -353,10 +410,30 @@ def _to_candidate(row: Location) -> Candidate:
     )
 
 
+def _assert_corpus_space(rows: Sequence[Location]) -> None:
+    """Every location we are about to rank must be in our vector space.
+
+    Checking the traveller's vector alone is not enough, and that gap is the
+    whole failure this guard exists to prevent: a user embedded by this process
+    and a corpus embedded by the seed job with a different model produce
+    cosine distances that look perfectly reasonable and mean nothing.
+
+    Checked against the rows actually retrieved rather than a sample, so a
+    corpus that is half re-embedded is caught rather than passing on the luck
+    of which row was sampled.
+    """
+    pairs = {(row.embedding_model, row.embedding_version) for row in rows}
+    for model, version in pairs:
+        embeddings.require_same_space(
+            model, version, what=f"the location corpus ({len(rows)} rows retrieved)"
+        )
+
+
 def retrieve(
     country: Optional[str],
     travellers: Sequence[Traveller],
     per_member_k: int = PER_MEMBER_K,
+    city: Optional[str] = None,
 ) -> tuple[list[Candidate], dict[UUID, list[UUID]], int]:
     """Build the raw candidate set.
 
@@ -371,22 +448,32 @@ def retrieve(
     favourites: dict[UUID, list[UUID]] = {}
     examined = 0
 
+    retrieved: list[Location] = []
+
     with session_scope() as session:
         for traveller in travellers:
             rows = _fetch_near(
-                session, traveller.vector, country, travellers, per_member_k
+                session, traveller.vector, country, travellers, per_member_k, city
             )
             examined += len(rows)
+            retrieved.extend(rows)
             favourites[traveller.account_id] = [row.location_id for row in rows]
             for row in rows:
                 by_id.setdefault(row.location_id, _to_candidate(row))
 
         if len(travellers) > 1:
             middle = embeddings.centroid([t.vector for t in travellers])
-            rows = _fetch_near(session, middle, country, travellers, per_member_k)
+            rows = _fetch_near(
+                session, middle, country, travellers, per_member_k, city
+            )
             examined += len(rows)
+            retrieved.extend(rows)
             for row in rows:
                 by_id.setdefault(row.location_id, _to_candidate(row))
+
+        # Inside the session: the rows must still be attached to read their
+        # provenance columns.
+        _assert_corpus_space(retrieved)
 
     return list(by_id.values()), favourites, examined
 
@@ -580,15 +667,19 @@ def build_pool(
     target: int = 45,
     per_member_k: int = PER_MEMBER_K,
     quota_per_member: int = DEFAULT_QUOTA_PER_MEMBER,
+    city: Optional[str] = None,
 ) -> Pool:
     """Everything above, in order, for one country and one set of travellers."""
     travellers = load_travellers(account_ids)
-    candidates, favourites, examined = retrieve(country, travellers, per_member_k)
+    candidates, favourites, examined = retrieve(
+        country, travellers, per_member_k, city
+    )
 
     if not candidates:
         raise EmptyPool(
-            f"no embedded locations in {country or 'the corpus'} survived the "
-            f"filters (examined {examined} rows)"
+            f"no embedded locations in "
+            f"{city + ', ' + country if city and country else country or 'the corpus'}"
+            f" survived the filters (examined {examined} rows)"
         )
 
     scored = score_candidates(candidates, travellers, favourites)

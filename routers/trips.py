@@ -18,6 +18,8 @@ from DATABASE.ORM import (
 )
 from deps import current_account, not_implemented
 from schemas import (
+    MAX_DAYS_AHEAD,
+    MAX_TRIP_DAYS,
     ItineraryItemCreate,
     ItineraryItemOut,
     ItineraryItemUpdate,
@@ -193,11 +195,35 @@ def create_trip(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="a group trip needs a group_id",
         )
-    if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
+    # Date sanity. The CHECK constraint catches end < start at the database,
+    # but by then the message is an IntegrityError, and it says nothing about
+    # a trip that starts last year or runs for a decade.
+    today = date_type.today()
+    if payload.start_date and payload.end_date:
+        if payload.end_date < payload.start_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="end_date is before start_date",
+            )
+        span = (payload.end_date - payload.start_date).days + 1
+        if span > MAX_TRIP_DAYS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"that is {span} days; trips are capped at {MAX_TRIP_DAYS}",
+            )
+    if payload.end_date and not payload.start_date:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="end_date is before start_date",
+            detail="end_date given without start_date",
         )
+    if payload.start_date and (payload.start_date - today).days > MAX_DAYS_AHEAD:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date is more than two years away",
+        )
+    # A start date in the past is allowed on purpose - people record trips they
+    # have already taken. An *end* date in the past with a future start is not,
+    # and that is caught above.
 
     with session_scope() as session:
         group_uuid: Optional[UUID] = None

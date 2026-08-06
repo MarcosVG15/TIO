@@ -268,15 +268,21 @@ class Pipeline:
         log.info("embedding worker stopped")
 
     def embed_pending_batch(self, batch_size: int = 16, max_attempts: int = 3) -> int:
-        """Embed one batch of pending profiles. Returns how many were written.
+        """Embed one batch of pending profiles.
+
+        Returns how many rows the queue moved on - embedded plus parked. It is
+        progress, not successes, because callers use it to decide whether to
+        keep going: a batch that only contained unembeddable rows did real work
+        and must not look like an empty queue, or the drain stops early and
+        leaves genuine rows pending behind them.
 
         Three transactions on purpose. The claim commits before the API call so
         that a slow OpenAI response is not holding a row lock, and the write is
         separate so a failure marks the row rather than rolling back the claim.
         """
-        claimed = self._claim_pending(batch_size)
+        claimed, parked = self._claim_pending(batch_size)
         if not claimed:
-            return 0
+            return parked
 
         space = self.processor.space
         try:
@@ -287,7 +293,7 @@ class Pipeline:
             # a bounded number of times and then parked as 'failed'.
             log.warning("embedding call failed for %d row(s): %s", len(claimed), exc)
             self._record_failure([pid for pid, _ in claimed], str(exc), max_attempts)
-            return 0
+            return parked
 
         with session_scope() as session:
             for (personality_id, _), vector in zip(claimed, vectors):
@@ -301,10 +307,19 @@ class Pipeline:
                 personality.embedding_error = None
 
         log.info("embedded %d profile(s)", len(claimed))
-        return len(claimed)
+        return len(claimed) + parked
 
-    def _claim_pending(self, batch_size: int) -> list[tuple[UUID, str]]:
+    def _claim_pending(self, batch_size: int) -> tuple[list[tuple[UUID, str]], int]:
         """Take ownership of up to `batch_size` pending rows.
+
+        Returns (claimed, parked): rows ready to embed, and rows taken out of
+        the queue because they never can be.
+
+        Deliberately does *not* filter out rows with no paragraph. Excluding
+        them in SQL leaves them at 'pending' forever - invisible to the worker,
+        counted as backlog by every status check, and never explained to
+        anyone. Selecting them and marking them failed is what makes the
+        problem findable.
 
         SKIP LOCKED is what makes it safe to run more than one worker: two
         processes claiming concurrently get disjoint batches instead of one
@@ -313,28 +328,35 @@ class Pipeline:
         with session_scope() as session:
             rows = session.scalars(
                 select(Personality)
-                .where(
-                    Personality.embedding_status == EmbeddingStatus.PENDING,
-                    Personality.profile_paragraph.is_not(None),
-                )
+                .where(Personality.embedding_status == EmbeddingStatus.PENDING)
                 .order_by(Personality.created_at)
                 .limit(batch_size)
                 .with_for_update(skip_locked=True)
             ).all()
 
             claimed: list[tuple[UUID, str]] = []
+            parked = 0
             for personality in rows:
                 paragraph = self.processor.paragraph_of(personality)
                 if paragraph is None:
-                    # Queued without a paragraph: nothing to embed, and leaving
-                    # it pending would spin the worker on it forever.
+                    # Queued without a paragraph: extraction failed during
+                    # onboarding, so there is nothing to embed until it is
+                    # re-run. Park it with a reason rather than retrying
+                    # something that cannot succeed.
                     personality.embedding_status = EmbeddingStatus.FAILED
                     personality.embedding_error = "no profile_paragraph to embed"
+                    parked += 1
                     continue
                 personality.embedding_status = EmbeddingStatus.PROCESSING
                 claimed.append((personality.personality_id, paragraph))
 
-            return claimed
+            if parked:
+                log.warning(
+                    "%d profile(s) had no paragraph to embed and were marked "
+                    "failed; their onboarding extraction needs re-running",
+                    parked,
+                )
+            return claimed, parked
 
     def _record_failure(
         self,
