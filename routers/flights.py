@@ -95,9 +95,15 @@ def search(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Flight search is not configured on this server.",
         ) from exc
+    except flight_service.BadRoute as exc:
+        # 422, not 502: the route is the caller's input. Telling them the
+        # service is broken would send them to support instead of to their
+        # typo. Not an empty list either - that would hide the typo entirely.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     except flight_service.FlightError as exc:
-        # Provider faults and bad input both land here; the message is written
-        # to be safe to show.
+        # Genuine provider faults. The message is written to be safe to show.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc

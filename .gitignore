@@ -1,4 +1,6 @@
 .env
+# Any local variant too - a .bak of a secrets file is still a secrets file.
+.env.*
 venv
 
 # Frontend

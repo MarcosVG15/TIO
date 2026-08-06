@@ -66,6 +66,17 @@ class NotConfigured(FlightError):
     """No provider credentials, so flight search is switched off."""
 
 
+class BadRoute(FlightError):
+    """The provider rejected the route itself, not the request.
+
+    Distinct from a provider fault because the caller can act on it: an
+    unrecognised airport code or a pair with no service between them is the
+    user's input, and answering "the flight service is broken" would send them
+    to support instead of to their typo. The provider's own wording is carried
+    through - "airport KIV: not flightable" is already the right message.
+    """
+
+
 @dataclass(frozen=True)
 class FlightOffer:
     """One indicative fare, plus where to go and buy it."""
@@ -252,6 +263,10 @@ class TravelpayoutsProvider:
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPStatusError as exc:
+            # A 400 here is the provider judging the route, and its body says
+            # why in words worth showing. Anything else is its problem.
+            if exc.response.status_code == 400:
+                raise BadRoute(_provider_error(exc.response)) from exc
             raise FlightError(
                 f"flight provider returned {exc.response.status_code}"
             ) from exc
@@ -336,6 +351,16 @@ class TravelpayoutsProvider:
 
         offers.sort(key=lambda offer: offer.price)
         return offers[:limit]
+
+
+def _provider_error(response: httpx.Response) -> str:
+    """The provider's own explanation, or a generic one if it did not give a
+    parseable body."""
+    try:
+        message = (response.json() or {}).get("error")
+    except ValueError:
+        message = None
+    return str(message) if message else "that route was rejected by the flight provider"
 
 
 def _as_date(value: Any, fallback: Optional[date]) -> Any:
