@@ -19,7 +19,7 @@ from datetime import date as date_type
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, select
 
 import airports
@@ -43,6 +43,20 @@ POOL_TARGET = 60
 # Drafts
 # ---------------------------------------------------------------------------
 
+
+def _blank_to_none(value: Any) -> Any:
+    """Treat an empty string as absent.
+
+    The plan screen initialises its form state to "" rather than null, so an
+    untouched date field arrives as an empty string. Pydantic rejects that as
+    an invalid date and the whole request 422s before any handler runs - which
+    the screen reports as "Could not connect to the server", because it cannot
+    render Pydantic's list-shaped detail either. Two bugs stacked into one
+    unhelpful message.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 class DraftIn(BaseModel):
     """Whatever the planning screen currently holds.
@@ -86,6 +100,10 @@ class DraftIn(BaseModel):
     draft_id: Optional[str] = Field(
         default=None, validation_alias=AliasChoices("draft_id", "draftId", "id")
     )
+
+    _blank = field_validator(
+        "start_date", "end_date", "budget", "travellers", mode="before"
+    )(_blank_to_none)
 
 
 def _draft_out(row: TripDraft) -> dict[str, Any]:
@@ -181,12 +199,23 @@ def delete_draft(
 # ---------------------------------------------------------------------------
 
 
+
 class SuggestionsIn(BaseModel):
     """What the plan screen sends when it asks for options."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     destination: str = Field(min_length=2, max_length=200)
-    start_date: Optional[date_type] = None
-    end_date: Optional[date_type] = None
+    start_date: Optional[date_type] = Field(
+        default=None, validation_alias=AliasChoices("start_date", "startDate")
+    )
+    end_date: Optional[date_type] = Field(
+        default=None, validation_alias=AliasChoices("end_date", "endDate")
+    )
+
+    _empty_dates = field_validator(
+        "start_date", "end_date", "budget", mode="before"
+    )(_blank_to_none)
     travellers: int = Field(default=1, ge=1, le=20)
     vibe: Optional[str] = None
     notes: Optional[str] = None

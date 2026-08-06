@@ -16,7 +16,10 @@ import threading
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import auth as auth_config
 from routers import (
@@ -122,6 +125,56 @@ api.include_router(uploads.router)
 api.include_router(planner.router)
 api.include_router(flights.router)
 app.include_router(api)
+
+
+#: Field names the screens use, as a person would say them.
+_FIELD_LABELS = {
+    "destination": "destination",
+    "start_date": "start date",
+    "end_date": "end date",
+    "travellers": "number of travellers",
+    "budget": "budget",
+    "currency": "currency",
+    "title": "trip name",
+    "prompt": "trip description",
+    "email": "email address",
+    "password": "password",
+    "name": "name",
+}
+
+
+@app.exception_handler(RequestValidationError)
+async def readable_validation_error(request, exc: RequestValidationError):
+    """Turn Pydantic's error list into one sentence the screen can render.
+
+    FastAPI's default `detail` is a list of error objects. Every screen in this
+    app renders `detail` as a string, so a list renders as nothing - and the
+    user is shown the generic network message instead. A rejected date then
+    reads as "Could not connect to the server", which sends everyone looking
+    at the wrong layer. It cost most of an afternoon once already.
+
+    The original list is kept under `errors` for anyone debugging; only the
+    human-facing field changes shape.
+    """
+    parts: list[str] = []
+    for error in exc.errors():
+        location = [str(p) for p in error.get("loc", []) if p != "body"]
+        field = location[-1] if location else "request"
+        label = _FIELD_LABELS.get(field, field.replace("_", " "))
+        message = error.get("msg", "is not valid")
+        if error.get("type") == "missing":
+            parts.append(f"{label} is required")
+        else:
+            parts.append(f"{label}: {message}")
+
+    detail = "; ".join(parts[:3]) or "Some of that could not be understood."
+    logging.getLogger(__name__).info(
+        "422 on %s %s - %s", request.method, request.url.path, detail
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": detail[:400], "errors": jsonable_encoder(exc.errors())},
+    )
 
 
 @app.get("/health", tags=["meta"])
