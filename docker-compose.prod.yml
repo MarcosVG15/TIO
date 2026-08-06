@@ -65,6 +65,39 @@ services:
       db:
         condition: service_healthy
 
+  # Drains locations.vec. Not started by `up -d`: it belongs to the "embed"
+  # profile, so it runs only when asked for explicitly.
+  #
+  #   docker compose -f docker-compose.prod.yml --profile embed up -d location-worker
+  #   docker compose -f docker-compose.prod.yml logs -f location-worker
+  #   docker compose -f docker-compose.prod.yml stop location-worker
+  #
+  # A profile rather than a one-off `run`, because this is a job measured in
+  # hours: a `docker compose run` dies with the SSH session that started it,
+  # and a detached one is unmanaged and unlogged. As a service it survives
+  # disconnects and reboots, and stops on command.
+  location-worker:
+    build: .
+    profiles: ["embed"]
+    restart: unless-stopped
+    command: ["python", "location_worker.py", "--batch-size", "64"]
+    env_file: .env
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-tio_database}
+    # Relative weight, not a hard cap: half the default 1024. Under contention
+    # with a populate job it yields; when the box is otherwise idle it still
+    # uses everything available. A hard `cpus:` limit would throttle it even
+    # when nothing else wants the cores.
+    cpu_shares: 512
+    # SIGTERM stops it after the current batch. The default ten seconds is not
+    # enough for a CPU embedding call to finish, and killing it mid-batch is
+    # what leaves rows stranded in 'processing'.
+    stop_grace_period: 120s
+    depends_on:
+      db:
+        condition: service_healthy
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

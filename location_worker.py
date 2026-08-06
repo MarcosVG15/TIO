@@ -31,10 +31,11 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text, update
 
 import embeddings
 from DATABASE.ORM import EmbeddingStatus, Location, session_scope
@@ -93,6 +94,13 @@ def _claim(batch_size: int, notable_only: bool) -> list[tuple[UUID, str]]:
         conditions.append(NOTABLE)
 
     with session_scope() as session:
+        # Never queue behind the populate script. If a row this claim wants is
+        # locked by a bulk insert or update, waiting on it would hold our own
+        # locks while doing nothing, and a populate job doing thousands of
+        # writes a second is exactly what should win that contest. Failing
+        # fast costs one empty batch and the next poll picks up different rows.
+        session.execute(text("SET LOCAL lock_timeout = '2s'"))
+        session.execute(text("SET LOCAL statement_timeout = '30s'"))
         rows = session.scalars(
             select(Location)
             .where(*conditions)
@@ -110,6 +118,33 @@ def _claim(batch_size: int, notable_only: bool) -> list[tuple[UUID, str]]:
         return claimed
 
 
+def reclaim_stale(older_than_minutes: int = 30) -> int:
+    """Return rows stuck in 'processing' to the queue.
+
+    A worker that is killed - a deploy, an OOM, a Ctrl-C during the embedding
+    call - leaves its claimed rows marked 'processing' with nobody working on
+    them. Nothing else ever looks at that state, so those rows would sit out
+    the rest of the run: invisible to `--status` as backlog and never embedded.
+
+    Time-based rather than owner-based because claims are not owned. Anything
+    still 'processing' after half an hour cannot be a live batch: a batch is
+    one model call over a few dozen short texts, and no such call runs that
+    long without having failed.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    with session_scope() as session:
+        session.execute(text("SET LOCAL lock_timeout = '2s'"))
+        result = session.execute(
+            update(Location)
+            .where(
+                Location.embedding_status == EmbeddingStatus.PROCESSING,
+                Location.updated_at < cutoff,
+            )
+            .values(embedding_status=EmbeddingStatus.PENDING)
+        )
+        return int(result.rowcount or 0)
+
+
 def _release(location_ids: list[UUID], error: str) -> None:
     """Put a failed batch back on the queue, with the reason recorded.
 
@@ -118,6 +153,7 @@ def _release(location_ids: list[UUID], error: str) -> None:
     corpus-sized job must survive that without shedding rows permanently.
     """
     with session_scope() as session:
+        session.execute(text("SET LOCAL lock_timeout = '2s'"))
         for location_id in location_ids:
             row = session.get(Location, location_id)
             if row is None:
@@ -182,6 +218,10 @@ def run(batch_size: int, notable_only: bool, poll_interval: float = 30.0) -> Non
         space.version,
         "notable only" if notable_only else "all rows",
     )
+
+    freed = reclaim_stale()
+    if freed:
+        log.info("returned %d stale 'processing' row(s) to the queue", freed)
 
     done = 0
     started = time.monotonic()

@@ -21,6 +21,7 @@ from routers import (
     auth,
     conversations,
     discovery,
+    drafts,
     flights,
     friends,
     onboarding,
@@ -76,6 +77,10 @@ api = APIRouter(prefix="/api")
 api.include_router(auth.router)
 api.include_router(onboarding.router)
 api.include_router(profile.router)
+# Before trips: both routers own paths under /trips, and FastAPI matches in
+# registration order. With trips first, "/trips/drafts" is swallowed by
+# "/trips/{trip_id}" and the drafts screen gets "trip not found".
+api.include_router(drafts.router)
 api.include_router(trips.router)
 api.include_router(conversations.router)
 api.include_router(social.router)

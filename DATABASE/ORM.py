@@ -987,6 +987,47 @@ class ItineraryItem(Base):
     )
 
 
+class TripDraft(Base):
+    """An unfinished trip form, saved so it can be picked up later.
+
+    The form itself lives in `payload` rather than in columns. A draft is
+    whatever the planning screen currently collects - destination, dates,
+    vibe, companions, features, a group-chat toggle - and that set changes
+    every time the frontend is rebuilt. Columns would mean a migration per
+    redesign to store data nobody queries on; the only things worth indexing
+    are whose it is and when it was touched.
+
+    Deliberately not a Trip with a status flag: a Trip has an itinerary, a
+    centroid and members, and a half-filled form has none of those. Keeping
+    them apart means neither has to carry the other's optional fields.
+    """
+
+    __tablename__ = "trip_drafts"
+    __table_args__ = (
+        # The list screen reads one account's drafts, newest first.
+        Index("ix_trip_drafts_account_updated", "account_id", "updated_at"),
+    )
+
+    draft_id: Mapped[uuid.UUID] = _uuid_pk()
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.account_id", ondelete="CASCADE"), nullable=False
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    account: Mapped["Account"] = relationship()
+
+
 class TripMemory(Base):
     __tablename__ = "trip_memories"
 

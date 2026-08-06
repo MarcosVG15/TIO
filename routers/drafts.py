@@ -1,0 +1,370 @@
+"""Trip drafts, and the three-options screen.
+
+Both of these exist because the rebuilt frontend calls them and nothing served
+them: `GET /api/trips/drafts` fell through to `GET /api/trips/{trip_id}` and
+came back "trip not found", and `POST /api/trips/suggestions` was a 405.
+
+Registered before `trips.router` in api.py, and that ordering is load-bearing.
+FastAPI matches in registration order, so with `/trips/{trip_id}` first the
+literal paths here would never be reached - which is precisely the bug this
+module fixes.
+"""
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import date as date_type
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
+
+import embeddings
+import itinerary as planner
+import recommend
+import trip_costing
+from DATABASE.ORM import Account, TripDraft, session_scope
+from deps import current_account
+from routers.trips import _split_destination
+
+log = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/trips", tags=["drafts"])
+
+#: Enough to compose from without making the prompt enormous.
+POOL_TARGET = 60
+
+
+# ---------------------------------------------------------------------------
+# Drafts
+# ---------------------------------------------------------------------------
+
+
+class DraftIn(BaseModel):
+    """Whatever the planning screen currently holds.
+
+    Permissive on purpose: a draft is an unfinished form, so half of it is
+    expected to be missing and none of it is worth rejecting. Validation
+    belongs at the point the trip is actually created, not here - refusing to
+    save a draft because its dates are backwards would lose the user's work to
+    protect them from a mistake they have not made yet.
+    """
+
+    model_config = {"extra": "allow"}
+
+    title: Optional[str] = None
+    destination: Optional[str] = None
+    start_date: Optional[date_type] = None
+    end_date: Optional[date_type] = None
+    travellers: Optional[int] = None
+    vibe: Optional[str] = None
+    notes: Optional[str] = None
+    prompt: Optional[str] = None
+    budget: Optional[float] = None
+    currency: Optional[str] = None
+    features: list[str] = Field(default_factory=list)
+    companions: list[dict[str, Any]] = Field(default_factory=list)
+    group_chat: dict[str, Any] = Field(default_factory=dict)
+    #: Present when the screen is updating a draft rather than creating one.
+    draft_id: Optional[str] = None
+
+
+def _draft_out(row: TripDraft) -> dict[str, Any]:
+    """The stored form, plus the two fields the server owns."""
+    payload = dict(row.payload or {})
+    payload["draft_id"] = str(row.draft_id)
+    payload["updated_at"] = row.updated_at.isoformat() if row.updated_at else None
+    return payload
+
+
+@router.get("/drafts")
+def list_drafts(account: Account = Depends(current_account)) -> dict[str, Any]:
+    """Every draft this account has, most recently touched first."""
+    with session_scope() as session:
+        rows = session.scalars(
+            select(TripDraft)
+            .where(TripDraft.account_id == account.account_id)
+            .order_by(TripDraft.updated_at.desc())
+        ).all()
+        return {"drafts": [_draft_out(row) for row in rows]}
+
+
+@router.post("/drafts", status_code=status.HTTP_201_CREATED)
+def save_draft(
+    payload: DraftIn,
+    account: Account = Depends(current_account),
+) -> dict[str, Any]:
+    """Create a draft, or update one when `draft_id` is supplied.
+
+    Upsert rather than separate create and update endpoints, because the
+    screen autosaves: it does not know or care whether this is the first save,
+    and giving it two calls to choose between would only invite it to choose
+    wrong.
+    """
+    # mode="json" so dates become ISO strings. The payload goes into JSONB,
+    # which cannot serialise a date object - and the screen reads these back
+    # as strings anyway.
+    body = payload.model_dump(mode="json", exclude_none=False)
+    draft_id = body.pop("draft_id", None)
+
+    with session_scope() as session:
+        row = None
+        if draft_id:
+            try:
+                row = session.scalar(
+                    select(TripDraft).where(
+                        TripDraft.draft_id == uuid.UUID(str(draft_id)),
+                        TripDraft.account_id == account.account_id,
+                    )
+                )
+            except ValueError:
+                row = None  # not a uuid: treat as a new draft rather than 400
+
+        if row is None:
+            row = TripDraft(account_id=account.account_id, payload=body)
+            session.add(row)
+        else:
+            row.payload = body
+
+        session.flush()
+        session.refresh(row)
+        return {"draft": _draft_out(row)}
+
+
+@router.delete("/drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_draft(
+    draft_id: str,
+    account: Account = Depends(current_account),
+) -> None:
+    """Discard a draft. Idempotent - deleting a gone draft is a success."""
+    try:
+        target = uuid.UUID(draft_id)
+    except ValueError:
+        return None
+
+    with session_scope() as session:
+        session.execute(
+            delete(TripDraft).where(
+                TripDraft.draft_id == target,
+                TripDraft.account_id == account.account_id,
+            )
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Three options
+# ---------------------------------------------------------------------------
+
+
+class SuggestionsIn(BaseModel):
+    """What the plan screen sends when it asks for options."""
+
+    destination: str = Field(min_length=2, max_length=200)
+    start_date: Optional[date_type] = None
+    end_date: Optional[date_type] = None
+    travellers: int = Field(default=1, ge=1, le=20)
+    vibe: Optional[str] = None
+    notes: Optional[str] = None
+    budget: Optional[float] = None
+    currency: str = "EUR"
+    title: Optional[str] = None
+    prompt: Optional[str] = None
+    features: list[str] = Field(default_factory=list)
+    companions: list[dict[str, Any]] = Field(default_factory=list)
+    #: Regenerate: places already shown, and what was wrong with them. The
+    #: button that says "show me different ones" is worth nothing if the next
+    #: set is the same set.
+    avoid_location_ids: list[str] = Field(default_factory=list)
+    feedback: Optional[str] = None
+
+    def days(self) -> int:
+        if self.start_date and self.end_date:
+            return max(1, (self.end_date - self.start_date).days + 1)
+        return 4
+
+    def date_problem(self) -> Optional[str]:
+        """A sentence, not a validation error list.
+
+        Same reasoning as TripCreate: Pydantic returns `detail` as a list of
+        objects and the frontend renders only strings, so a validator here
+        would show the user nothing at all.
+        """
+        if self.end_date and not self.start_date:
+            return "Please choose a start date as well as an end date."
+        if not (self.start_date and self.end_date):
+            return None
+        if self.end_date < self.start_date:
+            return "The end date is before the start date."
+        if self.start_date < date_type.today():
+            return "The start date is in the past - you cannot travel back in time."
+        if (self.end_date - self.start_date).days > 40:
+            return "That trip is longer than 40 days, which is more than Tio can plan."
+        return None
+
+
+_COMPLEXITY_LABELS = {1: "One city, no moving", 2: "Two cities", 3: "Three cities"}
+
+
+def _suggestion_out(
+    plan: Any,
+    *,
+    request: SuggestionsIn,
+    costed: dict[str, Any],
+    pace: Optional[str],
+) -> dict[str, Any]:
+    """One card, in the shape the screen reads."""
+    cities = [c for c in (getattr(plan, "cities", None) or []) if c]
+    complexity = max(1, len(set(cities)))
+
+    rows: list[dict[str, Any]] = []
+    highlights: list[str] = []
+    for day in getattr(plan, "days", []) or []:
+        for stop in getattr(day, "stops", []) or []:
+            rows.append({
+                "day": getattr(day, "day", 1),
+                "time": "",
+                "part_of_day": getattr(stop, "part_of_day", "") or "",
+                "title": getattr(stop, "title", "") or "",
+                "description": getattr(stop, "note", "") or "",
+            })
+            title = getattr(stop, "title", "")
+            if title and len(highlights) < 4:
+                highlights.append(title)
+
+    budget = costed.get("budget") or {}
+    return {
+        "suggestion_id": str(uuid.uuid4()),
+        "name": getattr(plan, "title", "Option"),
+        "tagline": (getattr(plan, "rationale", "") or "")[:180],
+        "pace": pace or "balanced",
+        "vibe": request.vibe or "",
+        "complexity": complexity,
+        "complexity_label": _COMPLEXITY_LABELS.get(
+            complexity, f"{complexity} cities"
+        ),
+        # Only ever the computed total. No fee, markup or saving is invented
+        # here - see the note in the endpoint docstring.
+        "estimated_cost": budget.get("total"),
+        "currency": budget.get("currency", request.currency),
+        "highlights": highlights,
+        "itinerary": rows,
+        # Extra, ignored by the current screen but the honest part of the
+        # number above: which lines were quoted and which were estimated.
+        "budget_detail": budget,
+        "flights": costed.get("flights"),
+        "accommodation": costed.get("accommodation"),
+        "tradeoffs": getattr(plan, "tradeoffs", "") or "",
+        "cities": cities,
+    }
+
+
+@router.post("/suggestions")
+def trip_suggestions(
+    payload: SuggestionsIn,
+    account: Account = Depends(current_account),
+) -> dict[str, Any]:
+    """Three different trips for one destination, each costed.
+
+    Deliberately not returning a fee, markup or "savings" figure even though
+    the screen has fields for them. Those are commercial numbers and I do not
+    know the rules behind them; a plausible-looking invented fee is the one
+    kind of wrong answer a traveller would actually act on. The screen treats
+    them as optional, so they are simply absent until someone tells me what
+    they should be.
+    """
+    problem = payload.date_problem()
+    if problem:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem
+        )
+
+    country, city = _split_destination(payload.destination)
+    days = payload.days()
+
+    try:
+        pool = recommend.build_pool(
+            country=country,
+            account_ids=[account.account_id],
+            target=POOL_TARGET,
+            city=city,
+            # No model-proposed places here. That is a second LLM round trip,
+            # and this endpoint answers a click that the browser abandons after
+            # twelve seconds - see the timing note below.
+            include_proposals=False,
+            notable_only=True,
+        )
+    except recommend.NoProfile as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except embeddings.SpaceMismatch as exc:
+        log.error("embedding space mismatch: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Recommendations are misconfigured on the server.",
+        ) from exc
+    except recommend.EmptyPool as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Nothing to suggest for {payload.destination} yet.",
+        ) from exc
+
+    avoid: list[uuid.UUID] = []
+    for raw in payload.avoid_location_ids:
+        try:
+            avoid.append(uuid.UUID(str(raw)))
+        except ValueError:
+            continue
+
+    try:
+        result = planner.compose(
+            pool=pool,
+            days=days,
+            avoid=avoid,
+            feedback=payload.feedback,
+        )
+    except planner.PlanningError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not build plans right now. Try again.",
+        ) from exc
+
+    traveller = pool.travellers[0] if pool.travellers else None
+    home = getattr(traveller, "home_city", None)
+    origin = None
+    if payload.start_date and home:
+        import trip_flights
+
+        origin = trip_flights.origin_code(None, home)
+
+    suggestions = []
+    for plan in result.plans:
+        costed = trip_costing.cost_plan(
+            plan,
+            start_date=payload.start_date,
+            travellers=payload.travellers,
+            budget_tier=getattr(traveller, "budget_tier", None),
+            origin_iata=origin,
+            country=country,
+            by_ref=result.by_ref,
+            currency=payload.currency,
+        )
+        suggestions.append(
+            _suggestion_out(
+                plan,
+                request=payload,
+                costed=costed,
+                pace=getattr(traveller, "travel_pace", None),
+            )
+        )
+
+    return {
+        "suggestions": suggestions,
+        # So a regenerate can ask for something genuinely different rather
+        # than rolling the dice on model temperature.
+        "considered_location_ids": [
+            str(c.location_id) for c in (result.by_ref or {}).values()
+        ],
+    }
