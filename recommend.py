@@ -474,7 +474,16 @@ def _fetch_near(
 
     Ordering happens in Postgres so the HNSW index does the work; only `limit`
     rows cross the wire.
+
+    Bounded, because the index only does the work when enough rows survive the
+    filters. Ask for the nearest neighbours in a city that does not exist and
+    HNSW keeps widening its search looking for `limit` matches that will never
+    appear, degrading into a scan of the whole table - measured at 25 seconds
+    against a request the browser abandons after twelve. Failing fast turns
+    that into an empty pool and an honest "nothing to suggest", which is a far
+    better answer than a hang.
     """
+    session.execute(text("SET LOCAL statement_timeout = '5s'"))
     return list(
         session.scalars(
             select(Location)

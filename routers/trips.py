@@ -398,7 +398,15 @@ def _split_destination(destination):
     """
     parts = [p.strip() for p in destination.split(",") if p.strip()]
     if len(parts) >= 2:
-        return parts[-1], parts[0]
+        country, city = parts[-1], parts[0]
+        # "Italy, Italy" is a country, not a city called Italy. The screen
+        # produces this whenever someone picks a country from the shelf, and
+        # filtering a vector search on a city that cannot exist is not merely
+        # empty - it makes HNSW widen its search until it has scanned the whole
+        # table, which measured 25 seconds on the real corpus.
+        if city.casefold() == country.casefold():
+            return country, None
+        return country, city
     return destination.strip(), None
 
 
