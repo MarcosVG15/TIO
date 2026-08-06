@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 import accounts
 import embeddings
 import recommend
+import rerank
 from DATABASE.ORM import Account
 from deps import current_account
 
@@ -27,15 +28,18 @@ _REASON_CHARS = 150
 
 
 def _match_percent(candidate, account_id) -> int:
-    """Cosine similarity as the percentage the card shows.
+    """The percentage the card shows.
 
-    Deliberately the raw similarity rather than a flattering curve. Nomic
-    cosines for genuinely good matches sit around 0.5-0.7, so these read lower
-    than a marketing "94% match" - but they are the number the ranking actually
-    used, and inventing a rescale would make the figure decorative.
+    Prefers the model's compatibility judgement, because that is what the
+    ordering used and a number that disagrees with the order is worse than no
+    number. Falls back to the blended cheap score when the judge did not run.
+
+    Not the raw cosine: with templated embedding_text those cluster in a narrow
+    band and every card would read 43-45%, which tells the user nothing.
     """
-    score = candidate.scores.get(account_id, candidate.group_score)
-    return max(0, min(100, round(score * 100)))
+    if candidate.llm_score is not None:
+        return max(0, min(100, int(candidate.llm_score)))
+    return max(0, min(100, round(candidate.final_score * 100)))
 
 
 def _tags(candidate) -> list[str]:
@@ -52,12 +56,15 @@ def _tags(candidate) -> list[str]:
 
 
 def _reason(candidate) -> str:
-    """One line on why this place is worth a look.
+    """One line on why this place suits this traveller.
 
-    The embedded paragraph is the most faithful description we hold - it is
-    literally what the match was computed from - so a trimmed version of it is
-    honest, unlike a generated sentence that could drift from the vector.
+    The judge's sentence when there is one - it is about the person, which is
+    what the card is for. The stored description is the fallback, and in this
+    corpus it is templated ("X is a attraction in Y"), so it reads poorly and
+    says nothing; that is a reason to fix embedding_text, not to hide it.
     """
+    if candidate.llm_reason:
+        return candidate.llm_reason
     text = (candidate.blurb or "").strip()
     if not text:
         return f"Matched to your travel profile in {candidate.city or candidate.country or 'this area'}."
@@ -125,8 +132,12 @@ def recommended_destinations(
             # to choose between. A straight top-6 off the index is whatever the
             # corpus happens to hold most of - which is how six Austrian
             # attractions end up being the entire shelf.
-            target=limit,
+            # Shortlist for the judge, not the final six.
+            target=rerank.MAX_CANDIDATES,
             per_member_k=200,
+            # 91% of the corpus has no wikidata entity, no article and no
+            # photograph. Those are bus stops, not destinations.
+            notable_only=True,
             # No country named means "show me anywhere", and a shelf of six
             # places in one country is not a choice.
             one_per_country=country is None,
@@ -144,7 +155,16 @@ def recommended_destinations(
     except recommend.EmptyPool:
         return {"destinations": [], "cities": [], "notes": []}
 
-    shelf = pool.candidates[:limit]
+    # Final stage: a model reads the shortlist and judges fit to this person,
+    # which the vector cannot do while embedding_text is templated. Falls back
+    # to the cheap ranking if it is unavailable.
+    judged = rerank.score_candidates(pool.candidates, pool.travellers)
+
+    shelf = (
+        recommend.pick_across_countries(judged, limit, per_country=1)
+        if country is None
+        else judged[:limit]
+    )
 
     return {
         # Field names match what the home screen reads, not what reads best in

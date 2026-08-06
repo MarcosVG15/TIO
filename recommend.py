@@ -56,16 +56,6 @@ from DATABASE.ORM import (
 
 log = logging.getLogger(__name__)
 
-#: Content similarity has no notion of "this place is actually worth going to"
-#: and will rank an unnamed bench above the Prado. Small, per the intent
-#: recorded on Location.popularity_score.
-POPULARITY_WEIGHT = 0.05
-
-#: A tagged-compatible restaurant gets this much of a nudge for each declared
-#: dietary need it satisfies. Deliberately small - it reorders, it does not
-#: decide, because absence of a tag is not evidence of unsuitability.
-DIET_TAG_BONUS = 0.04
-
 #: How many candidates to pull per member, and for the centroid.
 PER_MEMBER_K = 40
 
@@ -95,6 +85,52 @@ _DIET_TAGS = {
 #: Wheelchair values that satisfy a declared access need. NULL is absent on
 #: purpose - see the module docstring.
 _ACCESS_OK = ("yes", "designated")
+
+# ---------------------------------------------------------------------------
+# Ranking signals beyond the vector.
+#
+# The corpus is 6.8M OSM rows of which 91% have no wikidata id, no Wikipedia
+# article and no photograph - bus stops, benches, individual shopfronts. Worse,
+# `embedding_text` is templated ("X is a attraction in Y"), so every vector sits
+# in nearly the same place and cosine alone cannot separate the Prado from a
+# car park. These signals do the work the geometry currently cannot.
+# ---------------------------------------------------------------------------
+
+#: Relative weights of the cheap signals. Taste is deliberately not dominant
+#: *yet*: with templated embedding_text the cosine spread across the whole
+#: corpus is a few points, so leaning on it would be leaning on noise. Raise
+#: TASTE_WEIGHT and drop the others once embedding_text carries real prose.
+TASTE_WEIGHT = 0.45
+POPULARITY_WEIGHT = 0.35
+STYLE_WEIGHT = 0.20
+
+#: A tagged-compatible restaurant gets this much of a nudge for each declared
+#: dietary need it satisfies. Deliberately small - it reorders, it does not
+#: decide, because absence of a tag is not evidence of unsuitability.
+DIET_TAG_BONUS = 0.04
+
+#: Pageview counts are extremely long-tailed - the Eiffel Tower has millions,
+#: a regional museum a few hundred - so they are compressed logarithmically
+#: before use. Roughly: 100k+ views saturates at 1.0.
+_PAGEVIEW_SATURATION = 100_000
+_SITELINK_SATURATION = 60
+
+#: Which categories each declared travel style actually implies. Structured
+#: traits the questionnaire already collects, and which the vector path ignored
+#: entirely.
+_STYLE_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "city_break": ("landmark", "museum", "shopping"),
+    "beach": ("outdoor", "relaxation"),
+    "nature": ("outdoor",),
+    "road_trip": ("landmark", "outdoor"),
+    "culture": ("museum", "landmark", "event"),
+    "food": ("restaurant",),
+    "nightlife": ("bar", "nightlife"),
+    "adventure": ("outdoor",),
+    "wellness": ("relaxation",),
+    "family": ("outdoor", "landmark", "event"),
+    "business": (),
+}
 
 
 class NoProfile(Exception):
@@ -148,6 +184,20 @@ class Candidate:
     blurb: Optional[str]
     #: Denormalized primary image, mirrored onto Location from LocationImage.
     picture: Optional[str] = None
+    #: Notability evidence. 91% of the corpus has none of these.
+    wikidata_qid: Optional[str] = None
+    wikipedia_title: Optional[str] = None
+    pageviews: Optional[int] = None
+    sitelinks: Optional[int] = None
+
+    #: The individual signals, kept so a ranking can be explained rather than
+    #: just asserted.
+    taste_score: float = 0.0
+    popularity_prior: float = 0.0
+    style_score: float = 0.0
+    #: Filled by the LLM re-rank stage when it runs.
+    llm_score: Optional[int] = None
+    llm_reason: Optional[str] = None
     tags: dict[str, Any] = field(default_factory=dict)
 
     #: The location's own embedding, needed only while scoring. Dropped before
@@ -329,6 +379,7 @@ def _base_filters(
     country: Optional[str],
     travellers: Sequence[Traveller],
     city: Optional[str] = None,
+    notable_only: bool = False,
 ):
     """Hard filters. Everything here excludes rows outright.
 
@@ -339,6 +390,19 @@ def _base_filters(
         Location.vec.is_not(None),
         Location.category.not_in(EXCLUDED_CATEGORIES),
     ]
+
+    if notable_only:
+        # 91% of the corpus is bus stops, benches and individual shopfronts
+        # with no external evidence anyone has ever cared about them. A
+        # wikidata entity, a Wikipedia article or a photograph is the cheapest
+        # available proof that a place is somewhere you would go on purpose.
+        conditions.append(
+            or_(
+                Location.wikidata_qid.is_not(None),
+                Location.wikipedia_title.is_not(None),
+                Location.picture.is_not(None),
+            )
+        )
 
     if city:
         # Narrowing to a city makes the whole plan local, which is the point of
@@ -370,6 +434,7 @@ def _fetch_near(
     travellers: Sequence[Traveller],
     limit: int,
     city: Optional[str] = None,
+    notable_only: bool = False,
 ) -> list[Location]:
     """The k nearest surviving rows to one vector.
 
@@ -379,7 +444,7 @@ def _fetch_near(
     return list(
         session.scalars(
             select(Location)
-            .where(_base_filters(country, travellers, city))
+            .where(_base_filters(country, travellers, city, notable_only))
             .order_by(Location.vec.cosine_distance(list(vector)))
             .limit(limit)
         ).all()
@@ -427,6 +492,10 @@ def _to_candidate(row: Location) -> Candidate:
         # the raw upstream prose keeps rows usable when it is absent.
         blurb=row.embedding_text or row.description,
         picture=_picture_of(row),
+        wikidata_qid=row.wikidata_qid,
+        wikipedia_title=row.wikipedia_title,
+        pageviews=row.wikipedia_pageviews,
+        sitelinks=row.wikidata_sitelinks,
         tags=dict(row.tags or {}),
         vector=list(row.vec) if row.vec is not None else [],
     )
@@ -456,6 +525,7 @@ def retrieve(
     travellers: Sequence[Traveller],
     per_member_k: int = PER_MEMBER_K,
     city: Optional[str] = None,
+    notable_only: bool = False,
 ) -> tuple[list[Candidate], dict[UUID, list[UUID]], int]:
     """Build the raw candidate set.
 
@@ -475,7 +545,13 @@ def retrieve(
     with session_scope() as session:
         for traveller in travellers:
             rows = _fetch_near(
-                session, traveller.vector, country, travellers, per_member_k, city
+                session,
+                traveller.vector,
+                country,
+                travellers,
+                per_member_k,
+                city,
+                notable_only,
             )
             examined += len(rows)
             retrieved.extend(rows)
@@ -486,7 +562,7 @@ def retrieve(
         if len(travellers) > 1:
             middle = embeddings.centroid([t.vector for t in travellers])
             rows = _fetch_near(
-                session, middle, country, travellers, per_member_k, city
+                session, middle, country, travellers, per_member_k, city, notable_only
             )
             examined += len(rows)
             retrieved.extend(rows)
@@ -503,6 +579,67 @@ def retrieve(
 # ---------------------------------------------------------------------------
 # Scoring - pure functions, no database
 # ---------------------------------------------------------------------------
+
+
+def popularity_prior(candidate: Candidate) -> float:
+    """0..1 estimate of "is this place actually worth going to".
+
+    Wikipedia pageviews are the strongest honest signal available: they measure
+    what people actually looked up, which no amount of tag-reading can. Wikidata
+    sitelinks are the fallback for places with an entity but no article in the
+    language we counted. Both are compressed logarithmically because the
+    distribution spans six orders of magnitude and a linear scale would make
+    everything except the top twenty places score zero.
+    """
+    best = 0.0
+
+    if candidate.pageviews and candidate.pageviews > 0:
+        best = max(
+            best,
+            min(1.0, math.log1p(candidate.pageviews) / math.log1p(_PAGEVIEW_SATURATION)),
+        )
+    if candidate.sitelinks and candidate.sitelinks > 0:
+        best = max(
+            best,
+            min(1.0, math.log1p(candidate.sitelinks) / math.log1p(_SITELINK_SATURATION)),
+        )
+    if best == 0.0 and candidate.popularity:
+        # Whatever the seed computed, when nothing better is recorded.
+        best = max(0.0, min(1.0, float(candidate.popularity)))
+
+    # Having an article or an entity at all is weak evidence of notability,
+    # worth something even when no counts were collected.
+    if best == 0.0 and (candidate.wikipedia_title or candidate.wikidata_qid):
+        best = 0.15
+    return best
+
+
+def style_affinity(candidate: Candidate, travellers: Sequence[Traveller]) -> float:
+    """0..1 for how well a place matches the declared travel styles.
+
+    Uses the structured traits the questionnaire already collects and the
+    vector path ignored completely. For a group this is the *share* of members
+    whose styles the place serves, which keeps it consistent with the maximin
+    idea: a place matching one member of four scores 0.25, not 1.0.
+    """
+    if not travellers:
+        return 0.0
+
+    served = 0
+    for traveller in travellers:
+        wanted: set[str] = set()
+        for style in traveller.travel_styles:
+            wanted.update(_STYLE_CATEGORIES.get(style, ()))
+        if not wanted:
+            # No styles declared: this signal cannot speak for them, so they
+            # count as neutral rather than dissatisfied.
+            served += 1
+            continue
+        if candidate.category in wanted:
+            served += 1
+        elif candidate.subcategory and candidate.subcategory.lower() in wanted:
+            served += 1
+    return served / len(travellers)
 
 
 def _diet_bonus(candidate: Candidate, travellers: Sequence[Traveller]) -> float:
@@ -550,9 +687,31 @@ def score_candidates(
             for traveller in travellers
         }
         candidate.group_score = min(candidate.scores.values())
+
+        # Three signals rather than one. See the weights above for why taste
+        # does not dominate while embedding_text is templated.
+        candidate.taste_score = candidate.group_score
+        candidate.popularity_prior = popularity_prior(candidate)
+        candidate.style_score = style_affinity(candidate, travellers)
+
+        # The popularity and style boosts are scaled by how fairly the place
+        # lands across the group. Without this, fame rescues a candidate one
+        # member actively dislikes, and a famous nightclub outranks the quiet
+        # museum everybody was happy with - which is exactly the failure the
+        # maximin floor exists to prevent. Solo travellers are unaffected.
+        best_member = max(candidate.scores.values()) if candidate.scores else 0.0
+        if len(travellers) > 1 and best_member > 0:
+            fairness = max(0.0, candidate.group_score / best_member)
+        else:
+            fairness = 1.0
+
         candidate.final_score = (
-            candidate.group_score
-            + POPULARITY_WEIGHT * (candidate.popularity or 0.0)
+            TASTE_WEIGHT * candidate.taste_score
+            + fairness
+            * (
+                POPULARITY_WEIGHT * candidate.popularity_prior
+                + STYLE_WEIGHT * candidate.style_score
+            )
             + _diet_bonus(candidate, travellers)
         )
         candidate.favourite_of = tuple(
@@ -654,6 +813,19 @@ def select_pool(
     return sorted(chosen.values(), key=lambda c: c.final_score, reverse=True)
 
 
+def effective_score(candidate: Candidate) -> float:
+    """What a candidate should be ordered by, whatever stages have run.
+
+    The LLM judgement when there is one, on the same 0..1 scale as the cheap
+    blend so the two can be compared. Every ordering must go through this, or a
+    later stage silently re-sorts by the cheap score and throws away the
+    judgement that was just paid for.
+    """
+    if candidate.llm_score is not None:
+        return candidate.llm_score / 100.0
+    return candidate.final_score
+
+
 def pick_across_countries(
     candidates: Sequence[Candidate],
     limit: int,
@@ -674,13 +846,15 @@ def pick_across_countries(
         return []
 
     by_country: dict[str, list[Candidate]] = {}
-    for candidate in sorted(candidates, key=lambda c: c.final_score, reverse=True):
+    for candidate in sorted(candidates, key=effective_score, reverse=True):
         key = (candidate.country or candidate.region or "").strip().lower() or "?"
         by_country.setdefault(key, []).append(candidate)
 
     # Countries ordered by their single best candidate, so the strongest match
     # overall still leads the shelf.
-    order = sorted(by_country, key=lambda k: by_country[k][0].final_score, reverse=True)
+    order = sorted(
+        by_country, key=lambda k: effective_score(by_country[k][0]), reverse=True
+    )
 
     chosen: list[Candidate] = []
     for round_index in range(per_country):
@@ -689,17 +863,18 @@ def pick_across_countries(
             if round_index < len(bucket):
                 chosen.append(bucket[round_index])
                 if len(chosen) >= limit:
-                    return chosen
+                    return sorted(chosen, key=effective_score, reverse=True)
 
     # Still short: the corpus does not span enough countries. Top up on score.
     if len(chosen) < limit:
         taken = {c.location_id for c in chosen}
-        for candidate in sorted(candidates, key=lambda c: c.final_score, reverse=True):
+        for candidate in sorted(candidates, key=effective_score, reverse=True):
             if candidate.location_id not in taken:
                 chosen.append(candidate)
                 if len(chosen) >= limit:
                     break
-    return chosen
+    # Always ordered by what the card shows, never by the round-robin order.
+    return sorted(chosen, key=effective_score, reverse=True)
 
 
 def rank_cities(candidates: Sequence[Candidate]) -> list[tuple[str, int, float]]:
@@ -739,6 +914,7 @@ def build_pool(
     quota_per_member: int = DEFAULT_QUOTA_PER_MEMBER,
     city: Optional[str] = None,
     one_per_country: bool = False,
+    notable_only: bool = False,
 ) -> Pool:
     """Everything above, in order, for one country and one set of travellers.
 
@@ -749,7 +925,7 @@ def build_pool(
     """
     travellers = load_travellers(account_ids)
     candidates, favourites, examined = retrieve(
-        country, travellers, per_member_k, city
+        country, travellers, per_member_k, city, notable_only
     )
 
     if not candidates:
