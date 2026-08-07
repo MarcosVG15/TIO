@@ -300,8 +300,25 @@ class TripCreate(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=2000)
     vibe: Optional[str] = Field(default=None, max_length=200)
     travellers: Optional[int] = Field(default=None, ge=1, le=20)
-    #: Account ids travelling together.
-    companions: list[str] = Field(default_factory=list, max_length=20)
+    #: Who else is going. The screen sends objects - {"name": "Ana",
+    #: "contact": "ana@x.com"} - not account ids, so declaring list[str] made
+    #: every save 422 the moment a companion was added, and the failure showed
+    #: up as the generic network error rather than as anything about companions.
+    #: Bare strings are still accepted and read as a name.
+    companions: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+    @field_validator("companions", mode="before")
+    @classmethod
+    def _companions_as_objects(cls, value):
+        if not isinstance(value, list):
+            return value
+        out = []
+        for entry in value:
+            if isinstance(entry, str):
+                out.append({"name": entry})
+            elif isinstance(entry, dict):
+                out.append(entry)
+        return out
     #: UI feature toggles, carried through untouched.
     features: list[str] = Field(default_factory=list, max_length=30)
     group_chat: Optional[GroupChatRequest] = None
@@ -309,7 +326,13 @@ class TripCreate(BaseModel):
     # Kept for API callers that speak the ORM's language rather than the
     # screen's. Neither is required.
     origin_location_id: Optional[str] = None
-    budget_limit: Optional[Decimal] = Field(default=None, ge=0)
+    #: The screen calls this `budget`; the ORM column is budget_limit. Accepting
+    #: both means the number the traveller set on the slider is actually stored
+    #: rather than silently dropped as an unknown field.
+    budget_limit: Optional[Decimal] = Field(
+        default=None, ge=0, validation_alias=AliasChoices("budget_limit", "budget")
+    )
+    currency: Optional[str] = Field(default=None, max_length=8)
     group_id: Optional[str] = None
 
     @property
@@ -394,6 +417,37 @@ class TripOut(BaseModel):
     itinerary: list[PlannedItemOut] = Field(default_factory=list)
     #: Cheapest indicative fares found for the destination, if any.
     flights: list["FlightSuggestionOut"] = Field(default_factory=list)
+
+    # ---- what the trip screens actually read --------------------------------
+    #
+    # The current-trip mapper reads title / location / day_number / total_days /
+    # progress_percent and falls back to literals when they are missing - which
+    # is why every trip rendered as the heading "Current trip", the subtitle
+    # "Day 1 of 1" and 0% progress regardless of what was stored. `name` was
+    # being sent and never read.
+    #
+    #: The trip's own name. Same value as `name`; sent under both keys because
+    #: the screen reads `title` and other callers read `name`.
+    title: Optional[str] = None
+    #: Where the trip happens, for the subtitle. Derived from the plan's cities.
+    location: Optional[str] = None
+    country: Optional[str] = None
+    #: Which day of the trip today is, 1-based and clamped to the trip's length.
+    #: 1 before it starts, the final day after it ends.
+    day_number: int = 1
+    #: How many days the trip runs. From the dates when they exist, otherwise
+    #: from how many days the plan actually covers.
+    total_days: int = 1
+    #: Completed stops as a percentage. The screen computes this itself when
+    #: absent, so this only has to be right, not present.
+    progress_percent: int = 0
+    spots_visited: int = 0
+    #: Reserved for the gallery, budget and bookings panes. Sent as empty rather
+    #: than omitted so the screen renders its own empty states instead of
+    #: falling over on an undefined.
+    gallery: list[dict] = Field(default_factory=list)
+    bookings: list[dict] = Field(default_factory=list)
+    cover_image_url: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

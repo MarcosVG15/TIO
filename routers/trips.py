@@ -158,9 +158,58 @@ def _trip_itinerary(trip: Trip) -> list[PlannedItemOut]:
     return [_planned_from_item(item) for item in planned]
 
 
+def _trip_progress(trip: Trip, itinerary: list[PlannedItemOut]) -> dict:
+    """Where the traveller is in this trip, for the screen's header.
+
+    Every figure here has a sane answer when the data is thin, because a trip
+    with no dates and no plan is a normal state during planning - it must render
+    as an honest "day 1 of 1", not as a crash or a blank.
+    """
+    days_in_plan = len({item.day for item in itinerary}) or 1
+    if trip.start_date and trip.end_date and trip.end_date >= trip.start_date:
+        total = (trip.end_date - trip.start_date).days + 1
+    else:
+        total = days_in_plan
+
+    today = date_type.today()
+    if trip.start_date and today >= trip.start_date:
+        # Clamped: the day after a trip ends is still its last day, not day 9
+        # of an 8-day trip.
+        day_number = min(total, (today - trip.start_date).days + 1)
+    else:
+        day_number = 1
+
+    done = sum(1 for item in itinerary if item.completed)
+    percent = round(done / len(itinerary) * 100) if itinerary else 0
+
+    cities = [item.location.city for item in itinerary if item.location and item.location.city]
+    countries = [
+        item.location.country for item in itinerary if item.location and item.location.country
+    ]
+    return {
+        "total_days": max(1, total),
+        "day_number": max(1, day_number),
+        "progress_percent": percent,
+        "spots_visited": done,
+        # First city the plan visits, which is what a subtitle should say.
+        # dict.fromkeys keeps first-seen order without a set's shuffling.
+        "location": ", ".join(list(dict.fromkeys(cities))[:2]) or None,
+        "country": next(iter(dict.fromkeys(countries)), None),
+        "cover_image_url": next(
+            (item.location.picture for item in itinerary
+             if item.location and item.location.picture),
+            None,
+        ),
+    }
+
+
 def _trip_out(trip: Trip) -> TripOut:
     centre = _trip_centre(trip)
+    itinerary = _trip_itinerary(trip)
+    progress = _trip_progress(trip, itinerary)
     return TripOut(
+        title=trip.name,
+        **progress,
         trip_id=str(trip.trip_id),
         name=trip.name,
         status=trip.status,
@@ -172,7 +221,7 @@ def _trip_out(trip: Trip) -> TripOut:
         group_id=str(trip.group_id) if trip.group_id else None,
         lat=centre[0] if centre else None,
         lng=centre[1] if centre else None,
-        itinerary=_trip_itinerary(trip),
+        itinerary=itinerary,
     )
 
 
