@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Literal, Optional, Sequence
 from uuid import UUID
@@ -43,12 +43,23 @@ log = logging.getLogger(__name__)
 #: pinning a dated snapshot rather than a floating alias.
 MODEL_ID = os.getenv("PLANNER_MODEL", "gpt-4o-2024-08-06")
 
-#: How much of the pool to show the model. The whole pool is usually fine, but
-#: a cap keeps a pathological country from blowing the context window.
-MAX_POOL_IN_PROMPT = 60
+#: How much of the pool to show the model.
+#:
+#: Sized by the token budget, not the context window. Composition runs as three
+#: concurrent calls, so the pool is sent three times - and the account's limit
+#: is 30,000 tokens per minute, which at the old cap of 60 allowed fewer than
+#: two "generate" presses a minute before every call started returning 429.
+#: A 429 costs far more than a thin pool: the client backs off several seconds
+#: and the browser has already given up.
+#:
+#: Twenty-eight is still four or five choices per day for a week-long trip,
+#: which is more than any plan uses.
+MAX_POOL_IN_PROMPT = 28
 
 #: Descriptions are prose paragraphs; the model needs the gist, not all of it.
-MAX_BLURB_CHARS = 240
+#: Halved for the same reason as the pool cap - this is per candidate, so it is
+#: multiplied by the pool size and then by three.
+MAX_BLURB_CHARS = 110
 
 PlanShape = Literal["single_city", "multi_city", "themed"]
 PartOfDay = Literal["morning", "afternoon", "evening"]
@@ -134,6 +145,10 @@ safe for an allergy. Where a meal matters and suitability is unverified, say in
 the note that it needs checking ahead. Do not silently drop meals to avoid the
 problem - travellers still have to eat."""
 
+
+#: Sliced out of ROLE for the single-plan calls. Kept as a constant so the
+#: two never drift: if the section is reworded, this still removes it.
+_THREE_PLANS_BLOCK = ROLE[ROLE.index("THREE DIFFERENT PLANS"):ROLE.index("COHERENT DAYS")]
 
 PROMPT = """Plan a trip to {country}.
 
@@ -250,11 +265,16 @@ def _candidate_payload(
         "subcategory": candidate.subcategory,
         "about": blurb or None,
         "group_fit": round(candidate.group_score, 3),
-        "fit": {
+    }
+
+    # Per-member scores only when there is more than one member. For a solo
+    # traveller `fit` is `group_fit` repeated under their name, and the pool is
+    # sent three times a request against a tight token ceiling.
+    if len(travellers) > 1:
+        payload["fit"] = {
             traveller.name: round(candidate.scores.get(traveller.account_id, 0.0), 3)
             for traveller in travellers
-        },
-    }
+        }
 
     # Only include facts that are actually known - a wall of nulls spends
     # tokens telling the model nothing.
@@ -355,7 +375,10 @@ def _build_prompt(
                 _candidate_payload(c, pool.travellers, index + 1)
                 for index, c in enumerate(shown)
             ],
-            indent=1,
+            # Compact. Pretty-printing spends roughly a fifth of the pool's
+            # tokens on whitespace the model does not read, and the pool is
+            # sent once per concurrent call.
+            separators=(",", ":"),
         ),
     )
     # The validator needs the exact ordering the model was shown, or a ref
@@ -410,12 +433,28 @@ _client: Optional[OpenAI] = None
 
 
 def _get_client() -> OpenAI:
+    """The shared client, with a timeout that fits the caller's budget.
+
+    Both settings here were actively harmful before. The default timeout is ten
+    minutes, so a hung connection held a request open long past any point the
+    browser was still listening; and `max_retries=3` meant one transient failure
+    silently spent three times the latency budget before returning anything.
+    On a path the browser abandons after twelve seconds, a retry is not
+    resilience - it is a guaranteed failure that costs more.
+
+    One retry, bounded. If the first call and one retry both miss the deadline,
+    the right answer is two plans instead of three, not a third attempt.
+    """
     global _client
     if _client is None:
         key = os.getenv("OPENAI_API_KEY")
         if not key:
             raise PlanningError("OPENAI_API_KEY is not set")
-        _client = OpenAI(api_key=key, max_retries=3)
+        _client = OpenAI(
+            api_key=key,
+            max_retries=1,
+            timeout=float(os.getenv("PLANNER_TIMEOUT", "20")),
+        )
     return _client
 
 
@@ -440,6 +479,13 @@ _SHAPE_BRIEFS: dict[str, str] = {
 }
 
 
+#: The system prompt with the three-plans section removed. Each parallel call
+#: produces ONE plan and is told so explicitly, so shipping instructions about
+#: returning three is both confusing and - sent three times a request against a
+#: 30,000 token-per-minute ceiling - expensive.
+ROLE_SINGLE = ROLE.replace(_THREE_PLANS_BLOCK, "")
+
+
 def _one_plan(prompt: str, shape: str, temperature: float) -> Optional[TripPlan]:
     """Ask for a single plan of one shape. Returns None if that call fails."""
     brief = _SHAPE_BRIEFS.get(shape, "")
@@ -452,7 +498,7 @@ def _one_plan(prompt: str, shape: str, temperature: float) -> Optional[TripPlan]
         completion = _get_client().chat.completions.parse(
             model=MODEL_ID,
             messages=[
-                {"role": "system", "content": ROLE},
+                {"role": "system", "content": ROLE_SINGLE},
                 {"role": "user", "content": instruction},
             ],
             response_format=TripPlan,
@@ -472,6 +518,7 @@ def compose_parallel(
     temperature: float = 0.7,
     flights: str = "",
     shapes: Sequence[str] = ("single_city", "multi_city", "themed"),
+    deadline: Optional[float] = None,
 ) -> PlanningResult:
     """The same three plans, as three concurrent calls instead of one.
 
@@ -491,10 +538,39 @@ def compose_parallel(
 
     prompt, shown = _build_prompt(pool, days, avoid, feedback, flights)
 
-    with ThreadPoolExecutor(max_workers=len(shapes)) as pool_exec:
-        results = list(
-            pool_exec.map(lambda s: _one_plan(prompt, s, temperature), shapes)
-        )
+    # Wait for what arrives in time, not for all of it. Measured composition
+    # varies from 4s to 12.6s for the same input - the mean is comfortable and
+    # the tail is not - so waiting for the slowest of three calls is a coin
+    # flip against a browser that gives up at twelve seconds. Returning two
+    # good plans is a far better outcome than returning nothing, and the
+    # traveller cannot tell that a third was ever intended.
+    executor = ThreadPoolExecutor(max_workers=len(shapes))
+    try:
+        futures = [
+            executor.submit(_one_plan, prompt, shape, temperature)
+            for shape in shapes
+        ]
+        finished, unfinished = wait(futures, timeout=deadline)
+        for late in unfinished:
+            late.cancel()
+        if unfinished:
+            log.warning(
+                "composition deadline hit: %d of %d plan(s) arrived in %.1fs",
+                len(finished), len(futures), deadline or 0.0,
+            )
+    finally:
+        # wait=False so a call still in flight cannot hold the response open;
+        # its own client timeout ends it. Blocking here would undo the deadline.
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    results = []
+    for future in futures:
+        if future not in finished:
+            continue
+        try:
+            results.append(future.result())
+        except Exception as exc:  # noqa: BLE001 - one shape failing is survivable
+            log.warning("a planner call raised: %s", exc)
 
     produced = [plan for plan in results if plan is not None]
     if not produced:

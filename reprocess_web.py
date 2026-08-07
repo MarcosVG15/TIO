@@ -89,6 +89,34 @@ HEAD_TAGS = [
         "</style>"
     ),
     (
+        # A progress bar while the options are being costed. The call takes
+        # around eleven seconds - a spinner in a button reads as "nothing is
+        # happening" for that long, which is why people press it twice.
+        #
+        # Done as an animated stripe across the button that is already there
+        # rather than a new element: the button is disabled for exactly the
+        # duration of the request, so `[disabled]` is a reliable hook, and
+        # adding DOM to a minified React tree from outside is not.
+        # Indeterminate on purpose - the server cannot report real progress
+        # through a single request, and a fake percentage that stalls at 90%
+        # is worse than an honest sweep.
+        "tio-pending-bar",
+        "<style id=\"tio-pending-bar\">"
+        "@keyframes tio-sweep{0%{background-position:100% 0}100%{background-position:-100% 0}}"
+        "button[disabled][class*='bg-accent'],button.btn-chunky[disabled]{"
+        "background-image:linear-gradient(90deg,"
+        "rgba(255,255,255,0) 0%,rgba(255,255,255,.28) 45%,"
+        "rgba(255,255,255,.28) 55%,rgba(255,255,255,0) 100%);"
+        "background-size:200% 100%;background-repeat:no-repeat;"
+        "animation:tio-sweep 1.15s linear infinite;"
+        "opacity:1;"
+        "}"
+        "@media (prefers-reduced-motion:reduce){"
+        "button[disabled][class*='bg-accent'],button.btn-chunky[disabled]"
+        "{animation:none}}"
+        "</style>"
+    ),
+    (
         "emrldco.com",
         '<script nowprocket data-noptimize="1" data-cfasync="false" '
         'data-wpfc-render="false" seraph-accel-crit="1" data-no-defer="1" '

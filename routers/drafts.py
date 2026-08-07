@@ -42,6 +42,22 @@ router = APIRouter(prefix="/trips", tags=["drafts"])
 #: Enough to compose from without making the prompt enormous.
 POOL_TARGET = 60
 
+#: The browser aborts every request after twelve seconds (AbortSignal.timeout
+#: in the bundle), and an aborted request is indistinguishable from a dead
+#: server - it shows "Could not connect to the server". So the endpoint must
+#: finish inside that, and the only way to guarantee it is to bound each stage
+#: rather than hope the total lands under the line. Measured composition alone
+#: ranges from 4.1s to 12.6s for identical input.
+REQUEST_BUDGET = 10.5
+
+#: Left for costing after composition: flight and hotel lookups, which have
+#: their own provider timeouts and run concurrently.
+COSTING_RESERVE = 2.0
+
+#: Never give composition less than this - below it, nothing useful returns and
+#: we would have spent the pool build for nothing.
+MIN_COMPOSE = 4.0
+
 #: suggestion_id -> the plan behind that card, so choosing one does not throw
 #: it away. Without this, "Build this itinerary" re-plans from scratch: another
 #: half-minute of waiting, and a trip that may not be the trip on the card the
@@ -455,11 +471,20 @@ def trip_suggestions(
         # Parallel, not the single call: this endpoint answers a button press
         # that the browser abandons after twelve seconds, and one call writing
         # three itineraries takes roughly twice that.
+        # Whatever is left of the budget once the pool is built, minus what
+        # costing needs. Composition returns the plans that arrived in time
+        # rather than waiting for the slowest, so a bad tail costs one option
+        # instead of the whole response.
+        spent = time.monotonic() - began
+        compose_deadline = max(
+            MIN_COMPOSE, REQUEST_BUDGET - spent - COSTING_RESERVE
+        )
         result = planner.compose_parallel(
             pool=pool,
             days=days,
             avoid=avoid,
             feedback=payload.feedback,
+            deadline=compose_deadline,
         )
     except planner.PlanningError as exc:
         raise HTTPException(
