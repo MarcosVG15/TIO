@@ -29,6 +29,7 @@ from routers import (
     drafts,
     flights,
     friends,
+    notifications,
     onboarding,
     planner,
     profile,
@@ -147,6 +148,7 @@ api.include_router(conversations.router)
 api.include_router(social.router)
 api.include_router(discovery.router)
 api.include_router(friends.router)
+api.include_router(notifications.router)
 api.include_router(uploads.router)
 api.include_router(planner.router)
 api.include_router(flights.router)

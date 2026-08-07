@@ -42,10 +42,21 @@ class CityStay:
         self.city = city
         self.first_day = first_day
         self.last_day = last_day
+        #: True for the last stay of the trip, which is one night shorter than
+        #: its day count: you check out on the final morning rather than
+        #: sleeping through it. Set by city_stays once it knows which is last.
+        self.is_final = False
 
     @property
     def nights(self) -> int:
-        return max(1, self.last_day - self.first_day + 1)
+        """Nights slept, not days spent.
+
+        A three-day trip is two nights. Counting days as nights overcharged
+        every plan by one night on its final stay - and accommodation is the
+        largest estimated line, so a two-night city break was quoted 50% high.
+        """
+        days = self.last_day - self.first_day + 1
+        return max(1, days - 1 if self.is_final else days)
 
     def check_in(self, start: date) -> date:
         return start + timedelta(days=self.first_day - 1)
@@ -74,6 +85,9 @@ def city_stays(days: Iterable[Any]) -> list[CityStay]:
             stays[-1].last_day = number
         else:
             stays.append(CityStay(city, number, number))
+    if stays:
+        # The trip ends here, so this stay has one fewer night than it has days.
+        stays[-1].is_final = True
     return stays
 
 

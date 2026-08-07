@@ -290,6 +290,19 @@ def list_trips(
                 or_(Trip.end_date.is_(None), Trip.end_date >= today),
                 Trip.status.not_in([TripStatus.COMPLETED, TripStatus.CANCELLED]),
             ).order_by(Trip.start_date.asc().nullslast())
+            # The screen takes the first of these and renders it as "your
+            # current trip", so a planned trip has to outrank an empty one.
+            # Sorting by date alone meant an abandoned shell created earlier in
+            # the day won, and the trip the traveller had just built showed as
+            # an empty timeline - which reads as "nothing was saved".
+            trips = list(session.scalars(query).all())
+            trips.sort(
+                key=lambda t: (
+                    0 if _trip_itinerary(t) else 1,
+                    t.start_date or date_type.max,
+                )
+            )
+            return [_trip_out(trip) for trip in trips]
         else:
             query = query.order_by(Trip.start_date.desc().nullslast())
 

@@ -48,15 +48,15 @@ POOL_TARGET = 60
 #: finish inside that, and the only way to guarantee it is to bound each stage
 #: rather than hope the total lands under the line. Measured composition alone
 #: ranges from 4.1s to 12.6s for identical input.
-REQUEST_BUDGET = 10.5
+REQUEST_BUDGET = 11.0
 
 #: Left for costing after composition: flight and hotel lookups, which have
 #: their own provider timeouts and run concurrently.
-COSTING_RESERVE = 2.0
+COSTING_RESERVE = 1.2
 
 #: Never give composition less than this - below it, nothing useful returns and
 #: we would have spent the pool build for nothing.
-MIN_COMPOSE = 4.0
+MIN_COMPOSE = 6.0
 
 #: suggestion_id -> the plan behind that card, so choosing one does not throw
 #: it away. Without this, "Build this itinerary" re-plans from scratch: another
@@ -479,11 +479,24 @@ def trip_suggestions(
         compose_deadline = max(
             MIN_COMPOSE, REQUEST_BUDGET - spent - COSTING_RESERVE
         )
+        # What the traveller actually typed. Without this the planner sees a
+        # country and a day count and nothing else - "five slow days, temples,
+        # no seafood" was collected, shown back on the screen, and then thrown
+        # away before composition, so every plan ignored it.
+        asked_for = " ".join(
+            part for part in (
+                payload.prompt,
+                payload.notes,
+                f"Vibe: {payload.vibe}." if payload.vibe else None,
+                payload.feedback,
+            ) if part and part.strip()
+        ).strip() or None
+
         result = planner.compose_parallel(
             pool=pool,
             days=days,
             avoid=avoid,
-            feedback=payload.feedback,
+            feedback=asked_for,
             deadline=compose_deadline,
         )
     except planner.PlanningError as exc:

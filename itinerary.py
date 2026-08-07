@@ -504,10 +504,14 @@ def _one_plan(prompt: str, shape: str, temperature: float) -> Optional[TripPlan]
             response_format=TripPlan,
             temperature=temperature,
         )
+        # Inside the try on purpose. An empty `choices` array - upstream
+        # truncation, a filtered response - raises IndexError here, and with
+        # this outside the guard it escaped the worker thread and turned one
+        # survivable shape failure into a failed request.
+        return completion.choices[0].message.parsed
     except Exception as exc:  # noqa: BLE001 - one shape failing is survivable
         log.warning("planner call for shape %s failed: %s", shape, exc)
         return None
-    return completion.choices[0].message.parsed
 
 
 def compose_parallel(
