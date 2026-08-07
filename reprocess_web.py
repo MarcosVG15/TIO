@@ -46,6 +46,10 @@ BODY_TAGS = [
     # adds Leaflet and draws GET /api/trips/map beside the page heading. Loaded
     # from web/, not from the bundle, so a rebuild cannot wipe it.
     '<script src="/tio-map.js" defer></script>',
+    # A Friends section on the socials screen. The build has none: once you
+    # follow someone they leave "Travellers near you" and appear nowhere, so
+    # there was no route from socials to a conversation.
+    '<script src="/tio-friends.js" defer></script>',
 ]
 
 #: Injected just before </head>. Travelpayouts asks for it in <head> on every
