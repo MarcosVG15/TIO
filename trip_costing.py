@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 import budget as budget_model
+import countries
 import flights as flight_service
 import hotels as hotel_service
 from airports import iata_for_city
@@ -62,7 +63,14 @@ class CityStay:
         return start + timedelta(days=self.first_day - 1)
 
     def check_out(self, start: date) -> date:
-        return start + timedelta(days=self.last_day)
+        """Derived from nights, not from the day number.
+
+        Returning `start + last_day` asked the provider for one night too many
+        on the final stay - so the rate quoted was for a longer booking than the
+        trip, and `nights` being right locally did not help because the price
+        came back already wrong.
+        """
+        return self.check_in(start) + timedelta(days=self.nights)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging only
         return f"CityStay({self.city!r}, d{self.first_day}-d{self.last_day})"
@@ -168,6 +176,7 @@ def cost_plan(
     flight_search: Optional[Callable[..., list]] = None,
     hotel_search: Optional[Callable[..., list]] = None,
     resolve_iata: Optional[Callable[..., Optional[str]]] = None,
+    nationality: Optional[str] = None,
 ) -> dict[str, Any]:
     """Price a composed plan. Never raises on a provider failure.
 
@@ -238,6 +247,11 @@ def cost_plan(
     # ---- accommodation ---------------------------------------------------
     if start_date:
         for stay in stays:
+            # country_code is required by the provider, not optional - without
+            # it the search returns nothing at all, which is why accommodation
+            # never appeared even with a working key. nationality affects which
+            # rates are offered; the traveller's own country is the honest
+            # answer when we know it.
             offers = hotel_search(
                 stay.city,
                 stay.check_in(start_date),
@@ -245,6 +259,8 @@ def cost_plan(
                 adults=max(1, travellers),
                 currency=currency,
                 limit=3,
+                country_code=countries.iso2(country),
+                nationality=nationality or "GB",
             )
             if not offers:
                 # Estimated rather than omitted. Accommodation is usually the

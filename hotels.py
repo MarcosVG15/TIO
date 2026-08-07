@@ -330,10 +330,18 @@ def search_hotels(
     currency: str = "EUR",
     limit: int = 5,
     provider: Optional[HotelProvider] = None,
+    **extra: Any,
 ) -> list[HotelOffer]:
-    """Cheapest indicative rates for a city, or an empty list."""
+    """Cheapest bookable rates for a city, or an empty list.
+
+    `**extra` carries provider-specific arguments - country_code, nationality -
+    without every caller needing to know which provider is configured. The null
+    provider ignores them; dropping them silently was why hotels returned
+    nothing even when the key worked.
+    """
     return (provider or get_provider()).search(
-        city, check_in, check_out, adults=adults, currency=currency, limit=limit
+        city, check_in, check_out, adults=adults, currency=currency,
+        limit=limit, **extra
     )
 
 

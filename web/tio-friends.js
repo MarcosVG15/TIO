@@ -192,7 +192,9 @@
   var attempted = null;
 
   function refresh() {
-    if (!/socials/i.test(window.location.pathname)) return;
+    // The route is "/social", singular. Matching "/socials" meant this
+    // never ran at all.
+    if (!/\/social/i.test(window.location.pathname)) return;
     if (!suggestionsHeading()) return;
     if (document.getElementById(SECTION_ID)) return;
     if (attempted === window.location.pathname) return;
