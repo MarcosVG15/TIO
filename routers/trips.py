@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date as date_type, timedelta
+from datetime import date as date_type, time as time_type, timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -97,7 +97,10 @@ def _location_out(location: Optional[Location]) -> Optional[LocationOut]:
         city=location.city,
         latitude=location.latitude,
         longitude=location.longitude,
-        picture=getattr(location, "picture_url", None),
+        # `picture`, not `picture_url`. Location has no picture_url column, so
+        # getattr silently returned None for every stop ever rendered - the
+        # timeline has never shown an image, and nothing errored to say so.
+        picture=location.picture,
     )
 
 
@@ -128,10 +131,13 @@ def _planned_from_item(item: ItineraryItem) -> PlannedItemOut:
         day=int(details.get("day") or 1),
         part_of_day=str(details.get("part_of_day") or ""),
         time=item.time.isoformat() if item.time else None,
+        date=item.date,
         title=str(details.get("title") or (location.name if location else "")),
         description=item.description,
         completed=bool(details.get("completed", False)),
         location=location,
+        booking_url=item.booking_url,
+        cost=item.cost,
     )
 
 
@@ -503,8 +509,14 @@ def _write_plan(
                         if payload.start_date
                         else None
                     ),
+                    time=_PART_TIMES.get(stop.part_of_day),
                     activity_type=_activity_type(candidate.category),
                     description=stop.note,
+                    # Where to book or read more, and what it costs, when the
+                    # corpus knows. Both are frequently absent, which is why
+                    # they are attached rather than required.
+                    booking_url=candidate.website,
+                    cost=candidate.price,
                     # day / part_of_day / title are what the screen reads, and
                     # none is an ORM column - a plan is a different shape from a
                     # booking. JSONB keeps them with the row rather than in a

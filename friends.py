@@ -68,6 +68,28 @@ def friend_ids(session, account_id: UUID) -> set[UUID]:
     }
 
 
+def pending_ids(session, account_id: UUID) -> set[UUID]:
+    """Everyone with an outstanding request in either direction.
+
+    Not friends yet, but not strangers either - one of them has asked. Chat
+    treats that as enough, because the alternative is a social flow whose only
+    button leads somewhere that refuses you.
+    """
+    rows = session.execute(
+        select(Friendship.requester_id, Friendship.addressee_id).where(
+            Friendship.status == FriendshipStatus.PENDING,
+            or_(
+                Friendship.requester_id == account_id,
+                Friendship.addressee_id == account_id,
+            ),
+        )
+    ).all()
+    return {
+        (r.addressee_id if r.requester_id == account_id else r.requester_id)
+        for r in rows
+    }
+
+
 def are_friends(session, a: UUID, b: UUID) -> bool:
     return (
         session.scalar(

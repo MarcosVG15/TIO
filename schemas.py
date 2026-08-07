@@ -391,10 +391,16 @@ class PlannedItemOut(BaseModel):
     day: int
     part_of_day: str
     time: Optional[str] = None
+    #: The calendar date this stop falls on, once the trip has dates.
+    date: Optional[date_type] = None
     title: str
     description: Optional[str] = None
     completed: bool = False
     location: Optional[LocationOut] = None
+    #: Where to book or read more about this place, when the corpus knows.
+    booking_url: Optional[str] = None
+    #: Entry price per person, when recorded. Frequently absent.
+    cost: Optional[Decimal] = None
 
 
 class TripOut(BaseModel):

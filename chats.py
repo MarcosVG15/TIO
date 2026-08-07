@@ -16,7 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 
-from friends import friend_ids
+from friends import friend_ids, pending_ids
 from DATABASE.ORM import (
     Account,
     Conversation,
@@ -52,14 +52,24 @@ def _as_uuid(value: str) -> Optional[UUID]:
 
 
 def _check_all_friends(session, account_id: UUID, wanted: set[UUID]) -> None:
-    """Every person being added must already be an accepted friend.
+    """Every person being added must be connected, or asked to connect.
 
-    Checked against the whole set in one query rather than per person, and
-    the message names who is missing so the UI can say something useful.
+    A pending request counts. Requiring an *accepted* friendship made the whole
+    social flow a dead end: the screen's only action is "Follow", which sends a
+    request, and starting a chat then failed until the other person happened to
+    log in and accept - which in a demo, or with a friend sitting next to you,
+    never happens. Worse, the chat screen renders any failure as "server
+    unreachable", so the refusal did not even read as a rule.
+
+    Someone you have reached out to is someone you meant to talk to. They can
+    still ignore the chat, exactly as they can ignore the request.
+
+    Checked against the whole set in one query rather than per person, and the
+    message names who is missing so the UI can say something useful.
     """
     if not wanted:
         return
-    mine = friend_ids(session, account_id)
+    mine = friend_ids(session, account_id) | pending_ids(session, account_id)
     strangers = wanted - mine
     if strangers:
         names = session.scalars(
