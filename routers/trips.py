@@ -14,6 +14,7 @@ import recommend
 from DATABASE.ORM import (
     Account,
     ActivityType,
+    BookingStatus,
     GroupMember,
     ItineraryItem,
     Location,
@@ -164,6 +165,90 @@ def _trip_itinerary(trip: Trip) -> list[PlannedItemOut]:
     return [_planned_from_item(item) for item in planned]
 
 
+def _write_bookings(trip_id: UUID, costed: dict, payload: TripCreate) -> None:
+    """Persist the flight and the hotels the traveller was quoted.
+
+    Written as itinerary rows with their own `kind`, so they sit alongside the
+    plan without appearing in the sightseeing timeline. The price and the
+    booking link are the point: a fare shown on a card and then lost is worse
+    than one never shown, because the traveller believes it is saved.
+    """
+    flight = costed.get("flights")
+    stays = costed.get("accommodation") or []
+    if not flight and not stays:
+        return
+
+    with session_scope() as session:
+        if flight:
+            session.add(ItineraryItem(
+                trip_id=trip_id,
+                date=payload.start_date,
+                activity_type=ActivityType.TRANSPORT,
+                description=flight.get("summary"),
+                booking_url=flight.get("booking_url"),
+                cost=flight.get("price"),
+                booking_status=BookingStatus.PENDING,
+                details={
+                    "kind": "flight",
+                    "title": "%s to %s" % (
+                        flight.get("origin"), flight.get("destination")
+                    ),
+                    "currency": flight.get("currency"),
+                    "airline": flight.get("airline"),
+                    "depart_date": flight.get("depart_date"),
+                    "return_date": flight.get("return_date"),
+                    # Said here as well as on the card: these are cached fares,
+                    # not quotes, and the row outlives the card.
+                    "indicative": True,
+                },
+            ))
+        for stay in stays:
+            session.add(ItineraryItem(
+                trip_id=trip_id,
+                date=payload.start_date,
+                activity_type=ActivityType.HOTEL,
+                description=stay.get("summary"),
+                booking_url=stay.get("booking_url"),
+                cost=stay.get("total_price"),
+                booking_status=BookingStatus.PENDING,
+                details={
+                    "kind": "hotel",
+                    "title": stay.get("name"),
+                    "city": stay.get("city"),
+                    "nights": stay.get("nights"),
+                    "check_in": stay.get("check_in"),
+                    "check_out": stay.get("check_out"),
+                    "currency": stay.get("currency"),
+                    "indicative": True,
+                },
+            ))
+
+
+def _trip_bookings(trip: Trip) -> list[dict]:
+    """Flights and hotels, in the shape the trip screen's Bookings pane reads."""
+    out: list[dict] = []
+    for item in trip.itinerary_items or []:
+        details = dict(item.details or {})
+        kind = details.get("kind")
+        if kind not in {"flight", "hotel"}:
+            continue
+        out.append({
+            "booking_id": str(item.itinerary_id),
+            "kind": kind,
+            "title": details.get("title") or kind.title(),
+            "reference": item.booking_ref,
+            "from": details.get("origin") or details.get("check_in"),
+            "to": details.get("destination") or details.get("check_out"),
+            "starts_at": details.get("depart_date") or details.get("check_in") or "",
+            "ends_at": details.get("return_date") or details.get("check_out"),
+            "detail": item.description,
+            "url": item.booking_url,
+            "cost": float(item.cost) if item.cost is not None else None,
+            "currency": details.get("currency"),
+        })
+    return out
+
+
 def _trip_progress(trip: Trip, itinerary: list[PlannedItemOut]) -> dict:
     """Where the traveller is in this trip, for the screen's header.
 
@@ -228,6 +313,7 @@ def _trip_out(trip: Trip) -> TripOut:
         lat=centre[0] if centre else None,
         lng=centre[1] if centre else None,
         itinerary=itinerary,
+        bookings=_trip_bookings(trip),
     )
 
 
@@ -432,6 +518,7 @@ def _persist_chosen(
     if plan is None:
         return []
     written = _write_plan(trip_id, plan, chosen.get("by_ref") or {}, payload)
+    _write_bookings(trip_id, chosen.get("costed") or {}, payload)
     log.info("persisted chosen plan for trip %s: %d stop(s)", trip_id, len(written))
     return written
 

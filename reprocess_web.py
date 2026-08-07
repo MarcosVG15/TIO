@@ -138,6 +138,25 @@ LIVE_DOMAIN = "https://tio.agency/"
 #: code can reach.
 JS_PATCHES = [
     (
+        "assets/social-*.js",
+        # Following someone succeeds - the request is created, the API returns
+        # 200 - and the button never changes, because the mutation's success
+        # handler is empty and nothing refetches the list. From the outside
+        # that is indistinguishable from "I cannot follow people".
+        #
+        # Anchored on the mutation immediately before the page's own render
+        # call, which is the follow one; the like mutation above it is left
+        # alone, because reloading the page on a like would be worse than the
+        # bug. Identifiers are minified and change every build, so the shape is
+        # what is matched, not the names.
+        re.compile(
+            r"(\{mutationFn:\w+=>\w+\(\w+\))\}\)"
+            r"(;return\(0,\w+\.jsxs\)\(\w+,\{deco:)"
+        ),
+        r"\1,onSuccess:()=>window.location.reload()})\2",
+        "refresh the socials list after following someone",
+    ),
+    (
         "assets/plan-*.js",
         # "Build this itinerary" describes what the server does; "Save this
         # itinerary" describes what the traveller is doing. They have already
