@@ -113,6 +113,51 @@ def _trip_centre(trip: Trip):
     return maps.centroid(points)
 
 
+def _planned_from_item(item: ItineraryItem) -> PlannedItemOut:
+    """An itinerary row in the shape the trip screen reads.
+
+    day / part_of_day / title live in `details` rather than in columns, because
+    a plan is a different shape from a booking - see the note where they are
+    written. Falling back to the place's own name keeps a row rendering even if
+    a title was never recorded.
+    """
+    details = dict(item.details or {})
+    location = _location_out(item.location)
+    return PlannedItemOut(
+        itinerary_id=str(item.itinerary_id),
+        day=int(details.get("day") or 1),
+        part_of_day=str(details.get("part_of_day") or ""),
+        time=item.time.isoformat() if item.time else None,
+        title=str(details.get("title") or (location.name if location else "")),
+        description=item.description,
+        completed=bool(details.get("completed", False)),
+        location=location,
+    )
+
+
+def _trip_itinerary(trip: Trip) -> list[PlannedItemOut]:
+    """The trip's planned stops, in the order a day runs.
+
+    Populated here rather than left to a second request, because `TripOut`
+    declares an `itinerary` field and every screen reads it. Leaving it at its
+    default meant GET /trips returned `itinerary: []` no matter how many stops
+    were stored - so a trip with six saved stops rendered as an empty timeline,
+    and it looked like nothing had been saved at all.
+    """
+    planned = [
+        item
+        for item in (trip.itinerary_items or [])
+        if (item.details or {}).get("kind") == "planned"
+    ]
+    planned.sort(
+        key=lambda i: (
+            int((i.details or {}).get("day") or 0),
+            int((i.details or {}).get("order") or 0),
+        )
+    )
+    return [_planned_from_item(item) for item in planned]
+
+
 def _trip_out(trip: Trip) -> TripOut:
     centre = _trip_centre(trip)
     return TripOut(
@@ -127,6 +172,7 @@ def _trip_out(trip: Trip) -> TripOut:
         group_id=str(trip.group_id) if trip.group_id else None,
         lat=centre[0] if centre else None,
         lng=centre[1] if centre else None,
+        itinerary=_trip_itinerary(trip),
     )
 
 
