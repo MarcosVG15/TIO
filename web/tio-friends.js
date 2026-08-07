@@ -161,24 +161,57 @@
       section.appendChild(list);
     }
 
-    // After the whole suggestions block, not immediately after the heading -
-    // otherwise it lands between the heading and its own list.
-    var block = anchor.parentNode;
-    if (block && block.parentNode) block.parentNode.insertBefore(section, block.nextSibling);
-    else anchor.parentNode.insertBefore(section, anchor.nextSibling);
+    // Between "Travellers near you" and "Traveller feed", which is where a
+    // third section belongs. Anchoring on the feed heading is more reliable
+    // than walking up from the suggestions heading: the parent of a heading is
+    // whatever wrapper the build happened to emit, and inserting after that
+    // put the section somewhere off the visible flow entirely.
+    var feed = null;
+    var headings = document.querySelectorAll("h1, h2, h3");
+    for (var i = 0; i < headings.length; i++) {
+      if (/traveller feed|feed/i.test(headings[i].textContent || "")) {
+        feed = headings[i];
+        break;
+      }
+    }
+
+    if (feed && feed.parentNode) {
+      feed.parentNode.insertBefore(section, feed);
+    } else {
+      var block = anchor.parentNode;
+      if (block && block.parentNode) {
+        block.parentNode.insertBefore(section, block.nextSibling);
+      } else {
+        anchor.parentNode.insertBefore(section, anchor.nextSibling);
+      }
+    }
   }
+
+  // One attempt per page view, so a failing request cannot loop through the
+  // observer that watches for the section to disappear.
+  var attempted = null;
 
   function refresh() {
     if (!/socials/i.test(window.location.pathname)) return;
     if (!suggestionsHeading()) return;
     if (document.getElementById(SECTION_ID)) return;
+    if (attempted === window.location.pathname) return;
+    attempted = window.location.pathname;
 
     api("/users/suggested")
       .then(function (data) {
-        render((data && data.connections) || []);
+        // `connections` needs the newer API. Falling back to /friends means
+        // the section still works against a server that has not been rebuilt.
+        var people = (data && data.connections) || null;
+        if (people) return render(people);
+        return api("/friends").then(function (f) {
+          render((f && f.friends) || []);
+        });
       })
       .catch(function () {
-        /* leave the page as it was */
+        // Still render the section, empty - a missing section reads as a
+        // broken page, an empty one reads as "no friends yet".
+        render([]);
       });
   }
 

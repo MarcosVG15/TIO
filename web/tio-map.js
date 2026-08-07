@@ -164,10 +164,17 @@
     );
   }
 
+  // One attempt per page view. Without this, removing the container on
+  // failure re-triggers the observer, which calls render again, which fails
+  // again - a 404 became dozens of them in the console.
+  var attempted = null;
+
   function render() {
     var which = scope();
     if (!which) return;
     if (document.getElementById(CONTAINER_ID)) return;
+    if (attempted === window.location.pathname) return;
+    attempted = window.location.pathname;
     var anchor = heading();
     if (!anchor) return;
 
