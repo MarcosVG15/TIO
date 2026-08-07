@@ -42,6 +42,10 @@ WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 #: Injected just before </body>.
 BODY_TAGS = [
     '<script src="/google-signin.js" defer></script>',
+    # Maps for the trip screens. The built app ships no map library, so this
+    # adds Leaflet and draws GET /api/trips/map beside the page heading. Loaded
+    # from web/, not from the bundle, so a rebuild cannot wipe it.
+    '<script src="/tio-map.js" defer></script>',
 ]
 
 #: Injected just before </head>. Travelpayouts asks for it in <head> on every
@@ -212,12 +216,21 @@ def apply_js_patches() -> int:
         for path in targets:
             with open(path, encoding="utf-8", errors="ignore") as handle:
                 source = handle.read()
+            # What the patch leaves behind, with regex backreferences stripped.
+            # The previous probe compared against the raw replacement, which
+            # still contained \1 - so "already patched" was unreachable, every
+            # run re-applied every patch, and the suggestion_id insertion had
+            # silently accumulated seven copies in the bundle before anyone
+            # counted them. Duplicate object keys are legal JavaScript, which
+            # is why nothing ever broke to announce it.
+            marker = re.sub(r"\\\d", "", replacement).strip()
+            if marker and marker in source:
+                print(f"  already patched  {os.path.basename(path)}  {description}")
+                continue
+
             patched, count = pattern.subn(replacement, source)
             if not count:
-                if replacement.split("{", 1)[-1][:20] in source:
-                    print(f"  already patched  {os.path.basename(path)}  {description}")
-                else:
-                    print(f"  PATTERN MISSED   {os.path.basename(path)}  {description}")
+                print(f"  PATTERN MISSED   {os.path.basename(path)}  {description}")
                 continue
             with open(path, "w", encoding="utf-8", newline="") as handle:
                 handle.write(patched)

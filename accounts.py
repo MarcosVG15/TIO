@@ -358,9 +358,12 @@ def suggested_people(
     never empty.
 
     Two opposite audiences, hence friends_only:
-      - discovery (default) hides existing friends, since there is nothing
-        to do with them there, but keeps pending requests so you can see an
-        invite already in flight
+      - discovery (default) hides anyone you have already reached out to.
+        Leaving a followed person in the list is the bug it looks like: the
+        only affordance on the card is "Follow", pressing it a second time
+        does nothing new, and the traveller reasonably concludes following
+        did not work. They move to `connections` instead. An incoming request
+        still shows, because there it is you who has something to do.
       - friends_only=True returns *only* friends, which is what a "pick
         people for this chat" list needs - the chat endpoints reject anyone
         else with a 403
@@ -381,7 +384,8 @@ def suggested_people(
             people = [
                 a
                 for a in candidates
-                if friendships.get(a.account_id) not in ("friends", "blocked")
+                if friendships.get(a.account_id)
+                not in ("friends", "blocked", "pending_out")
             ]
         # Most shared destinations first; newest account breaks the tie,
         # which the query above already ordered by.
@@ -390,6 +394,36 @@ def suggested_people(
         return [
             _person(a, friendships.get(a.account_id), shared.get(a.account_id))
             for a in people[:limit]
+        ]
+
+
+def connections(account_id: UUID, limit: int = 40) -> list[dict]:
+    """Everyone you are connected to or have asked to connect with.
+
+    The other half of `suggested_people`: what leaves discovery has to land
+    somewhere, or following someone simply makes them disappear.
+    """
+    with session_scope() as session:
+        friendships = _friendship_map(session, account_id)
+        wanted = {
+            other: state
+            for other, state in friendships.items()
+            if state in ("friends", "pending_out")
+        }
+        if not wanted:
+            return []
+        shared = _shared_destinations(session, account_id)
+        rows = session.scalars(
+            select(Account).where(
+                Account.account_id.in_(list(wanted)),
+                Account.deleted_at.is_(None),
+            )
+        ).all()
+        # Confirmed friends before people who have not answered yet.
+        rows = sorted(rows, key=lambda a: 0 if wanted[a.account_id] == "friends" else 1)
+        return [
+            _person(a, wanted[a.account_id], shared.get(a.account_id))
+            for a in rows[:limit]
         ]
 
 

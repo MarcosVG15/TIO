@@ -179,5 +179,9 @@ def suggested_users(
     return {
         "users": accounts.suggested_people(
             account.account_id, friends_only=friendsOnly
-        )
+        ),
+        # People you already follow or are friends with. Sent alongside so the
+        # screen can show a "Your travellers" section beneath the suggestions
+        # rather than having them vanish when followed.
+        "connections": [] if friendsOnly else accounts.connections(account.account_id),
     }

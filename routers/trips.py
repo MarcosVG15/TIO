@@ -732,6 +732,81 @@ def list_itinerary(
         return [_item_out(item) for item in items]
 
 
+@router.get("/trips/map")
+def all_trips_map(
+    status: Optional[str] = None,
+    account: Account = Depends(current_account),
+):
+    """Every place this traveller has been planned into, as one GeoJSON layer.
+
+    Registered before /trips/{trip_id}/map, because "map" would otherwise be
+    read as a trip id - the same ordering trap that made /trips/drafts return
+    "trip not found".
+
+    `status` accepts the same values as GET /trips, so the Past trips page can
+    ask for past only and the explorer map can ask for everything.
+    """
+    today = date_type.today()
+    features: list[dict] = []
+    points: list[dict] = []
+
+    with session_scope() as session:
+        query = select(Trip).where(Trip.deleted_at.is_(None), _visible_trips(account))
+        wanted = (status or "").strip().lower()
+        if wanted == "past":
+            query = query.where(
+                or_(
+                    Trip.end_date < today,
+                    Trip.status.in_([TripStatus.COMPLETED, TripStatus.CANCELLED]),
+                )
+            )
+        elif wanted == "current":
+            query = query.where(
+                or_(Trip.end_date.is_(None), Trip.end_date >= today),
+                Trip.status.not_in([TripStatus.COMPLETED, TripStatus.CANCELLED]),
+            )
+
+        for trip in session.scalars(query).all():
+            for item in trip.itinerary_items or []:
+                place = item.location
+                if place is None or place.latitude is None or place.longitude is None:
+                    continue
+                details = dict(item.details or {})
+                points.append(
+                    {"latitude": place.latitude, "longitude": place.longitude}
+                )
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [place.longitude, place.latitude],
+                    },
+                    "properties": {
+                        "name": place.name,
+                        "title": details.get("title") or place.name,
+                        "city": place.city,
+                        "country": place.country,
+                        "picture": place.picture,
+                        "trip_id": str(trip.trip_id),
+                        "trip_name": trip.name,
+                        "day": details.get("day"),
+                        "kind": details.get("kind") or "planned",
+                        "date": item.date.isoformat() if item.date else None,
+                    },
+                })
+
+    centre = maps.centroid(points)
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "properties": {
+            "count": len(features),
+            "center": {"lat": centre[0], "lng": centre[1]} if centre else None,
+            "bounds": maps.bounds(points) if points else None,
+        },
+    }
+
+
 @router.get("/trips/{trip_id}/map")
 def trip_map(
     trip_id: str,
